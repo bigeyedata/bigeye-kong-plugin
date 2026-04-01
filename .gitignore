@@ -53,3 +53,6 @@ luacov.report.out
 luacov.report.html
 # exclude Pongo containerid file
 .containerid
+
+# our configuration file
+kong.yml

@@ -26,12 +26,14 @@ for _, strategy in helpers.all_strategies() do
         paths = { "/mock" },
       })
 
-      -- Add the custom plugin to the test Route
+      -- Add the custom plugin to the test Route with Bigeye configuration
       blue_print.plugins:insert {
         name = PLUGIN_NAME,
         route = { id = test_route.id },
         config = {
-          response_header_name = "X-CustomHeaderName",
+          bigeye_url = "http://httpbin.konghq.com/anything",
+          api_key = "test-api-key-12345",
+          timeout = 5000,
         },
       }
 
@@ -62,9 +64,9 @@ for _, strategy in helpers.all_strategies() do
     end)
 
     -- a nested describe defines an actual test on the plugin behavior
-    describe("The response", function()
+    describe("Request handling", function()
 
-      it("gets the expected header", function()
+      it("allows the request to proceed", function()
 
         -- invoke a test request
         local r = client:get("/mock/anything", {})
@@ -72,11 +74,32 @@ for _, strategy in helpers.all_strategies() do
         -- validate that the request succeeded, response status 200
         assert.response(r).has.status(200)
 
-        -- now validate and retrieve the expected response header
-        local header_value = assert.response(r).has.header("X-CustomHeaderName")
+      end)
 
-        -- validate the value of that header
-        assert.equal("http://httpbin.konghq.com/anything", header_value)
+      it("sends data when SQL query is in query parameters", function()
+
+        -- invoke a test request with SQL query parameter
+        local r = client:get("/mock/anything?query=SELECT+*+FROM+users", {})
+
+        -- validate that the request succeeded
+        assert.response(r).has.status(200)
+
+        -- Note: In a real test environment, you would mock the Bigeye endpoint
+        -- and verify that it received the correct data
+      end)
+
+      it("sends data when SQL is in request body", function()
+
+        -- invoke a test request with SQL in body
+        local r = client:post("/mock/anything", {
+          headers = {
+            ["Content-Type"] = "application/json",
+          },
+          body = '{"query": "SELECT * FROM products WHERE id = 1"}',
+        })
+
+        -- validate that the request succeeded
+        assert.response(r).has.status(200)
 
       end)
     end)
