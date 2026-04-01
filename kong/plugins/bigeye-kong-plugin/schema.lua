@@ -1,5 +1,3 @@
-local typedefs = require "kong.db.schema.typedefs"
-
 local PLUGIN_NAME = "bigeye-kong-plugin"
 
 local schema = {
@@ -16,6 +14,8 @@ local schema = {
           { api_key = {
             type = "string",
             required = false,
+            encrypted = true,
+            referenceable = true,
             description = "API key for authenticating with Bigeye service"
           } },
           { username = {
@@ -26,6 +26,8 @@ local schema = {
           { password = {
             type = "string",
             required = false,
+            encrypted = true,
+            referenceable = true,
             description = "Password for Basic Auth with Bigeye service"
           } },
           { timeout = {

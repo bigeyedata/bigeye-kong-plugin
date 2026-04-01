@@ -56,3 +56,6 @@ luacov.report.html
 
 # our configuration file
 kong.yml
+
+# IDE files
+.idea/

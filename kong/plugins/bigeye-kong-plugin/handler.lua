@@ -6,64 +6,11 @@ local BigeyeKongPluginHandler = {
   VERSION = "0.0.1",
 }
 
-local function send_to_bigeye(conf, data)
-  local httpc = http.new()
-  httpc:set_timeout(conf.timeout)
-
-  -- Prepare headers
-  local headers = {
-    ["Content-Type"] = "application/json",
-  }
-
-  -- Add authentication
-  if conf.username and conf.password then
-    local auth = ngx.encode_base64(conf.username .. ":" .. conf.password)
-    headers["Authorization"] = "Basic " .. auth
-  elseif conf.api_key then
-    headers["Authorization"] = "Bearer " .. conf.api_key
-  end
-
-  -- Encode the data as JSON
-  local body, err = cjson.encode(data)
-  if err then
-    kong.log.err("Failed to encode data for Bigeye: ", err)
-    return
-  end
-
-  kong.log.debug("Request to Bigeye - URL: ", conf.bigeye_url .. "/api/v1/access-decision")
-  kong.log.debug("Request to Bigeye - Headers: ", cjson.encode(headers))
-  kong.log.debug("Request to Bigeye - Body: ", body)
-
-  -- Send the request (fire and forget style)
-  local res, err = httpc:request_uri(conf.bigeye_url .. "/api/v1/access-decision", {
-    method = "POST",
-    headers = headers,
-    body = body,
-  })
-
-  if err then
-    kong.log.err("Failed to send request to Bigeye: ", err)
-    return
-  end
-
-  kong.log.debug("Response from Bigeye - Status: ", res.status)
-  kong.log.debug("Response from Bigeye - Headers: ", cjson.encode(res.headers))
-  kong.log.debug("Response from Bigeye - Body: ", res.body)
-
-  if res.status >= 400 then
-    kong.log.warn("Bigeye returned error status: ", res.status, " body: ", res.body)
-  else
-    kong.log.debug("Successfully sent notification to Bigeye, status: ", res.status)
-  end
-
-  httpc:close()
-end
-
 function BigeyeKongPluginHandler:access(conf)
   kong.log.debug("Bigeye plugin access phase triggered")
 
   -- Capture request information
-  local headers = kong.request.get_headers()
+  local req_headers = kong.request.get_headers()
 
   -- Get authenticated consumer (set by auth plugins like key-auth, jwt, basic-auth, etc.)
   local consumer = kong.client.get_consumer()
@@ -72,22 +19,24 @@ function BigeyeKongPluginHandler:access(conf)
     method = kong.request.get_method(),
     path = kong.request.get_path(),
     query = kong.request.get_query(),
-    headers = headers,
+    headers = req_headers,
     timestamp = ngx.time(),
     -- Extract AI agent metadata from headers
     agent_metadata = {
-      agent_id = headers["x-ai-agent-id"],
-      agent_type = headers["x-ai-agent-type"],
-      user_id = headers["x-user-id"],
-      session_id = headers["x-session-id"],
+      agent_id = req_headers["x-ai-agent-id"],
+      agent_type = req_headers["x-ai-agent-type"],
+      user_id = req_headers["x-user-id"],
+      session_id = req_headers["x-session-id"],
     },
     -- Include only consumer custom_id (null if no consumer)
     consumer = consumer and consumer.custom_id or nil,
   }
 
   -- Try to capture the request body if it exists (may contain SQL queries)
-  local body, err = kong.request.get_body()
-  if body then
+  local body, body_err = kong.request.get_body()
+  if body_err then
+    kong.log.warn("Failed to read request body: ", body_err)
+  elseif body then
     request_data.body = body
   end
 
@@ -118,10 +67,10 @@ function BigeyeKongPluginHandler:access(conf)
 
   -- Check headers
   if not request_data.database then
-    if headers["x-database"] then
-      request_data.database = headers["x-database"]
-    elseif headers["x-db-name"] then
-      request_data.database = headers["x-db-name"]
+    if req_headers["x-database"] then
+      request_data.database = req_headers["x-database"]
+    elseif req_headers["x-db-name"] then
+      request_data.database = req_headers["x-db-name"]
     end
   end
 
@@ -139,40 +88,53 @@ function BigeyeKongPluginHandler:access(conf)
   httpc:set_timeout(conf.timeout)
 
   -- Prepare headers
-  local headers = {
+  local bigeye_headers = {
     ["Content-Type"] = "application/json",
   }
 
   -- Add authentication
   if conf.username and conf.password then
     local auth = ngx.encode_base64(conf.username .. ":" .. conf.password)
-    headers["Authorization"] = "Basic " .. auth
+    bigeye_headers["Authorization"] = "Basic " .. auth
   elseif conf.api_key then
-    headers["Authorization"] = "Bearer " .. conf.api_key
+    bigeye_headers["Authorization"] = "Bearer " .. conf.api_key
   end
 
   -- Encode the data as JSON
-  local request_body, err = cjson.encode(request_data)
-  if err then
-    kong.log.err("Failed to encode data for Bigeye: ", err)
+  local request_body, encode_err = cjson.encode(request_data)
+  if encode_err then
+    kong.log.err("Failed to encode data for Bigeye: ", encode_err)
     return
   end
 
   kong.log.debug("Request to Bigeye - URL: ", conf.bigeye_url .. "/api/v1/access-decision")
-  kong.log.debug("Request to Bigeye - Headers: ", cjson.encode(headers))
+  -- Redact Authorization header for security
+  local safe_headers = {}
+  for k, v in pairs(bigeye_headers) do
+    if k == "Authorization" then
+      safe_headers[k] = "[REDACTED]"
+    else
+      safe_headers[k] = v
+    end
+  end
+  kong.log.debug("Request to Bigeye - Headers: ", cjson.encode(safe_headers))
   kong.log.debug("Request to Bigeye - Body: ", request_body)
 
   -- Send the request
-  local res, err = httpc:request_uri(conf.bigeye_url .. "/api/v1/access-decision", {
+  local res, request_err = httpc:request_uri(conf.bigeye_url .. "/api/v1/access-decision", {
     method = "POST",
-    headers = headers,
+    headers = bigeye_headers,
     body = request_body,
   })
 
-  httpc:close()
+  -- Set keepalive for connection reuse
+  local ok, keepalive_err = httpc:set_keepalive(10000, 100)
+  if not ok then
+    kong.log.debug("Failed to set keepalive: ", keepalive_err)
+  end
 
-  if err then
-    kong.log.err("Failed to send request to Bigeye: ", err)
+  if request_err then
+    kong.log.err("Failed to send request to Bigeye: ", request_err)
     -- On error, allow the request (fail open)
     return
   end
@@ -182,9 +144,9 @@ function BigeyeKongPluginHandler:access(conf)
   kong.log.debug("Response from Bigeye - Body: ", res.body)
 
   -- Parse the response
-  local response_data, err = cjson.decode(res.body)
-  if err then
-    kong.log.err("Failed to decode Bigeye response: ", err)
+  local response_data, decode_err = cjson.decode(res.body)
+  if decode_err then
+    kong.log.err("Failed to decode Bigeye response: ", decode_err)
     -- On error, allow the request (fail open)
     return
   end

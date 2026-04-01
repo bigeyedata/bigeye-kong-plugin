@@ -103,5 +103,29 @@ for _, strategy in helpers.all_strategies() do
 
       end)
     end)
+
+    --[[
+      NOTE: The following test scenarios should ideally be implemented with a mock Bigeye server:
+
+      1. Test ACCESS_DECISION_DENY (403 response):
+         - Mock Bigeye to return: {"accessDecision": "ACCESS_DECISION_DENY", "reason": "Access denied"}
+         - Verify the plugin returns HTTP 403 with proper error message
+
+      2. Test unreachable Bigeye (fail-open behavior):
+         - Configure Bigeye URL to an unreachable endpoint (e.g., http://localhost:19999)
+         - Verify the request is allowed (fail-open)
+
+      3. Test non-JSON response from Bigeye:
+         - Mock Bigeye to return invalid JSON or plain text
+         - Verify the plugin logs an error and allows the request (fail-open)
+
+      To implement these tests properly, you should:
+      - Create a mock server using Kong's custom_nginx.template
+      - Or use an external mock server like httpbin with proper response manipulation
+      - Or use lua-resty-mock to mock the HTTP client responses
+
+      Current limitation: httpbin.konghq.com doesn't allow custom response bodies
+      that simulate Bigeye's access decision format.
+    ]]
   end)
 end
