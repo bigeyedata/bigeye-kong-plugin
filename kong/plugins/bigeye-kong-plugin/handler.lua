@@ -57,23 +57,23 @@ function BigeyeKongPluginHandler:access(conf)
   -- Extract SQL query if present in common locations
   -- Check query parameters for SQL
   if request_data.query and request_data.query.query then
-    request_data.sql_query = request_data.query.query
+    request_data.sql = request_data.query.query
   elseif request_data.query and request_data.query.sql then
-    request_data.sql_query = request_data.query.sql
+    request_data.sql = request_data.query.sql
   end
 
   -- Check body for SQL if it's a table
   if type(body) == "table" then
     if body.query then
-      if request_data.sql_query then
+      if request_data.sql then
         kong.log.debug("SQL query in body is overriding query parameter value")
       end
-      request_data.sql_query = body.query
+      request_data.sql = body.query
     elseif body.sql then
-      if request_data.sql_query then
+      if request_data.sql then
         kong.log.debug("SQL query in body is overriding query parameter value")
       end
-      request_data.sql_query = body.sql
+      request_data.sql = body.sql
     end
   end
 
@@ -101,6 +101,103 @@ function BigeyeKongPluginHandler:access(conf)
     elseif body.db then
       request_data.database = body.db
     end
+  end
+
+  -- Use database_name from config if not found in request
+  if not request_data.database and conf.database_name then
+    request_data.database = conf.database_name
+  end
+
+  -- Extract tables from common locations
+  -- Check query parameters
+  if request_data.query and request_data.query.tables then
+    if type(request_data.query.tables) == "string" then
+      local parsed_tables, json_err = cjson.decode(request_data.query.tables)
+      if not json_err and type(parsed_tables) == "table" then
+        request_data.tables = parsed_tables
+      else
+        -- Try splitting by comma
+        request_data.tables = {}
+        for table_name in request_data.query.tables:gmatch("([^,]+)") do
+          table.insert(request_data.tables, table_name:match("^%s*(.-)%s*$")) -- trim whitespace
+        end
+      end
+    elseif type(request_data.query.tables) == "table" then
+      request_data.tables = request_data.query.tables
+    end
+  end
+
+  -- Check headers
+  if not request_data.tables then
+    if req_headers["x-tables"] then
+      local parsed_tables, json_err = cjson.decode(req_headers["x-tables"])
+      if not json_err and type(parsed_tables) == "table" then
+        request_data.tables = parsed_tables
+      else
+        request_data.tables = {}
+        for table_name in req_headers["x-tables"]:gmatch("([^,]+)") do
+          table.insert(request_data.tables, table_name:match("^%s*(.-)%s*$"))
+        end
+      end
+    end
+  end
+
+  -- Check body if it's a table
+  if not request_data.tables and type(body) == "table" then
+    if body.tables and type(body.tables) == "table" then
+      request_data.tables = body.tables
+    end
+  end
+
+  -- Use tables from config if not found in request
+  if not request_data.tables and conf.tables then
+    request_data.tables = conf.tables
+  end
+
+  -- Extract columns from common locations
+  -- Check query parameters
+  if request_data.query and request_data.query.columns then
+    if type(request_data.query.columns) == "string" then
+      local parsed_columns, json_err = cjson.decode(request_data.query.columns)
+      if not json_err and type(parsed_columns) == "table" then
+        request_data.columns = parsed_columns
+      else
+        -- Try splitting by comma
+        request_data.columns = {}
+        for column_name in request_data.query.columns:gmatch("([^,]+)") do
+          table.insert(request_data.columns, column_name:match("^%s*(.-)%s*$")) -- trim whitespace
+        end
+      end
+    elseif type(request_data.query.columns) == "table" then
+      request_data.columns = request_data.query.columns
+    end
+  end
+
+  -- Check headers
+  if not request_data.columns then
+    if req_headers["x-columns"] then
+      local parsed_columns, json_err = cjson.decode(req_headers["x-columns"])
+      if not json_err and type(parsed_columns) == "table" then
+        request_data.columns = parsed_columns
+      else
+        request_data.columns = {}
+        for column_name in req_headers["x-columns"]:gmatch("([^,]+)") do
+          table.insert(request_data.columns, column_name:match("^%s*(.-)%s*$"))
+        end
+      end
+    end
+  end
+
+  -- Check body if it's a table
+  if not request_data.columns and type(body) == "table" then
+    if body.columns and type(body.columns) == "table" then
+      request_data.columns = body.columns
+    end
+  end
+
+  -- Use columns from config if not found in request
+  if not request_data.columns and conf.columns then
+    request_data.columns = conf.columns
   end
 
   -- Send to Bigeye synchronously (we need to block on the response)

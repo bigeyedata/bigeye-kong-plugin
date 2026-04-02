@@ -36,6 +36,27 @@ local schema = {
             default = 5000,
             description = "Timeout in milliseconds for the HTTP request to Bigeye"
           } },
+          { database_name = {
+            type = "string",
+            required = false,
+            description = "The name of the database to query"
+          } },
+          { tables = {
+            type = "array",
+            required = false,
+            elements = {
+              type = "string",
+            },
+            description = "List of table names as strings"
+          } },
+          { columns = {
+            type = "array",
+            required = false,
+            elements = {
+              type = "string",
+            },
+            description = "List of column names as strings"
+          } },
         },
         entity_checks = {
           { mutually_required = { "username", "password" } },

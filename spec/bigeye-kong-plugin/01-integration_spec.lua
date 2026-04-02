@@ -171,6 +171,111 @@ fixtures.http_mock.bigeye_basic_auth = [[
   }
 ]]
 
+-- Mock Bigeye server that validates database_name, tables, and columns
+fixtures.http_mock.bigeye_validate_config = [[
+  server {
+    server_name bigeye_mock_validate_config;
+    listen 16561;
+
+    location = /api/v1/access-decision {
+      content_by_lua_block {
+        ngx.req.read_body()
+        local body = ngx.req.get_body_data()
+        local cjson = require "cjson"
+
+        -- Parse request
+        local ok, request_data = pcall(cjson.decode, body)
+        if not ok then
+          ngx.status = 400
+          ngx.say('{"error": "Invalid JSON"}')
+          return
+        end
+
+        -- Validate that database, tables, and columns are present
+        if request_data.database ~= "test_database" then
+          ngx.status = 400
+          ngx.say('{"error": "Expected database to be test_database"}')
+          return
+        end
+
+        if not request_data.tables or type(request_data.tables) ~= "table" then
+          ngx.status = 400
+          ngx.say('{"error": "Expected tables array"}')
+          return
+        end
+
+        if not request_data.columns or type(request_data.columns) ~= "table" then
+          ngx.status = 400
+          ngx.say('{"error": "Expected columns array"}')
+          return
+        end
+
+        ngx.log(ngx.DEBUG, "Bigeye mock (VALIDATE_CONFIG) received valid request with database: ", request_data.database)
+
+        -- Return ALLOW
+        ngx.status = 200
+        ngx.header["Content-Type"] = "application/json"
+        ngx.say('{"accessDecision": "ACCESS_DECISION_ALLOW"}')
+      }
+    }
+  }
+]]
+
+-- Mock Bigeye server that validates request overrides config
+fixtures.http_mock.bigeye_validate_override = [[
+  server {
+    server_name bigeye_mock_validate_override;
+    listen 16562;
+
+    location = /api/v1/access-decision {
+      content_by_lua_block {
+        ngx.req.read_body()
+        local body = ngx.req.get_body_data()
+        local cjson = require "cjson"
+
+        -- Parse request
+        local ok, request_data = pcall(cjson.decode, body)
+        if not ok then
+          ngx.status = 400
+          ngx.say('{"error": "Invalid JSON"}')
+          return
+        end
+
+        -- Validate that request values override config values
+        if request_data.database ~= "override_database" then
+          ngx.status = 400
+          ngx.say(cjson.encode({error = "Expected database to be override_database, got: " .. tostring(request_data.database)}))
+          return
+        end
+
+        -- Check that tables contains "override_table"
+        local found_override_table = false
+        if request_data.tables and type(request_data.tables) == "table" then
+          for _, table_name in ipairs(request_data.tables) do
+            if table_name == "override_table" then
+              found_override_table = true
+              break
+            end
+          end
+        end
+
+        if not found_override_table then
+          ngx.status = 400
+          ngx.say('{"error": "Expected tables to contain override_table"}')
+          return
+        end
+
+        ngx.log(ngx.DEBUG, "Bigeye mock (VALIDATE_OVERRIDE) received valid override request")
+
+        -- Return ALLOW
+        ngx.status = 200
+        ngx.header["Content-Type"] = "application/json"
+        ngx.say('{"accessDecision": "ACCESS_DECISION_ALLOW"}')
+      }
+    }
+  }
+]]
+
 -- Run the tests for each strategy. Strategies include "postgres" and "off"
 --   which represent the deployment topologies for Kong Gateway
 for _, strategy in helpers.all_strategies() do
@@ -283,6 +388,42 @@ for _, strategy in helpers.all_strategies() do
           username = "test-user",
           password = "test-password",
           timeout = 5000,
+        },
+      }
+
+      -- Route with config fields (database_name, tables, columns)
+      local route_config_fields = blue_print.routes:insert({
+        paths = { "/test-config-fields" },
+        service = { id = service.id },
+      })
+      blue_print.plugins:insert {
+        name = PLUGIN_NAME,
+        route = { id = route_config_fields.id },
+        config = {
+          bigeye_url = "http://localhost:16561",
+          api_key = "test-api-key-12345",
+          timeout = 5000,
+          database_name = "test_database",
+          tables = { "users", "orders" },
+          columns = { "email", "ssn" },
+        },
+      }
+
+      -- Route with config fields that will be overridden by request
+      local route_override = blue_print.routes:insert({
+        paths = { "/test-override" },
+        service = { id = service.id },
+      })
+      blue_print.plugins:insert {
+        name = PLUGIN_NAME,
+        route = { id = route_override.id },
+        config = {
+          bigeye_url = "http://localhost:16562",
+          api_key = "test-api-key-12345",
+          timeout = 5000,
+          database_name = "config_database",
+          tables = { "config_table" },
+          columns = { "config_column" },
         },
       }
 
@@ -461,6 +602,139 @@ for _, strategy in helpers.all_strategies() do
 
         -- Mock validates the Basic Auth header with correct credentials
         -- If invalid, it returns 401; if valid, returns 200
+        assert.response(r).has.status(200)
+      end)
+
+    end)
+
+    describe("Configuration fields (database_name, tables, columns)", function()
+
+      it("sends database_name from config to Bigeye", function()
+        local r = client:get("/test-config-fields/anything?query=SELECT+*+FROM+users", {})
+
+        -- Mock validates that database_name is sent correctly
+        assert.response(r).has.status(200)
+      end)
+
+      it("sends tables array from config to Bigeye", function()
+        local r = client:get("/test-config-fields/anything?query=SELECT+*+FROM+users", {})
+
+        -- Mock validates that tables array is sent correctly
+        assert.response(r).has.status(200)
+      end)
+
+      it("sends columns array from config to Bigeye", function()
+        local r = client:get("/test-config-fields/anything?query=SELECT+*+FROM+users", {})
+
+        -- Mock validates that columns array is sent correctly
+        assert.response(r).has.status(200)
+      end)
+
+    end)
+
+    describe("Request overrides configuration", function()
+
+      it("overrides database_name with query parameter", function()
+        local r = client:get("/test-override/anything?database=override_database&tables=override_table", {})
+
+        -- Mock validates that request database overrides config database
+        assert.response(r).has.status(200)
+      end)
+
+      it("overrides database_name with header", function()
+        local r = client:get("/test-override/anything?tables=override_table", {
+          headers = {
+            ["x-database"] = "override_database",
+          },
+        })
+
+        -- Mock validates that request database from header overrides config
+        assert.response(r).has.status(200)
+      end)
+
+      it("overrides database_name with request body", function()
+        local r = client:post("/test-override/anything", {
+          headers = {
+            ["Content-Type"] = "application/json",
+          },
+          body = '{"database": "override_database", "tables": ["override_table"]}',
+        })
+
+        -- Mock validates that request database from body overrides config
+        assert.response(r).has.status(200)
+      end)
+
+      it("overrides tables with query parameter (JSON array)", function()
+        local r = client:get("/test-override/anything?database=override_database&tables=" .. ngx.escape_uri('["override_table"]'), {})
+
+        -- Mock validates that request tables override config tables
+        assert.response(r).has.status(200)
+      end)
+
+      it("overrides tables with query parameter (comma-separated)", function()
+        local r = client:get("/test-override/anything?database=override_database&tables=override_table,another_table", {})
+
+        -- Mock validates that request tables override config tables
+        assert.response(r).has.status(200)
+      end)
+
+      it("overrides tables with header", function()
+        local r = client:get("/test-override/anything?database=override_database", {
+          headers = {
+            ["x-tables"] = "override_table,another_table",
+          },
+        })
+
+        -- Mock validates that request tables from header override config
+        assert.response(r).has.status(200)
+      end)
+
+      it("overrides tables with request body", function()
+        local r = client:post("/test-override/anything", {
+          headers = {
+            ["Content-Type"] = "application/json",
+          },
+          body = '{"database": "override_database", "tables": ["override_table", "another_table"]}',
+        })
+
+        -- Mock validates that request tables from body override config
+        assert.response(r).has.status(200)
+      end)
+
+      it("overrides columns with query parameter (JSON array)", function()
+        local r = client:get("/test-override/anything?database=override_database&tables=override_table&columns=" .. ngx.escape_uri('["override_column"]'), {})
+
+        -- Request should succeed with overridden columns
+        assert.response(r).has.status(200)
+      end)
+
+      it("overrides columns with query parameter (comma-separated)", function()
+        local r = client:get("/test-override/anything?database=override_database&tables=override_table&columns=override_column,another_column", {})
+
+        -- Request should succeed with overridden columns
+        assert.response(r).has.status(200)
+      end)
+
+      it("overrides columns with header", function()
+        local r = client:get("/test-override/anything?database=override_database&tables=override_table", {
+          headers = {
+            ["x-columns"] = "override_column,another_column",
+          },
+        })
+
+        -- Request should succeed with overridden columns
+        assert.response(r).has.status(200)
+      end)
+
+      it("overrides columns with request body", function()
+        local r = client:post("/test-override/anything", {
+          headers = {
+            ["Content-Type"] = "application/json",
+          },
+          body = '{"database": "override_database", "tables": ["override_table"], "columns": ["override_column", "another_column"]}',
+        })
+
+        -- Request should succeed with overridden columns
         assert.response(r).has.status(200)
       end)
 
