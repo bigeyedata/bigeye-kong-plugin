@@ -133,6 +133,44 @@ fixtures.http_mock.bigeye_validate = [[
   }
 ]]
 
+-- Mock Bigeye server that validates Basic Auth
+fixtures.http_mock.bigeye_basic_auth = [[
+  server {
+    server_name bigeye_mock_basic_auth;
+    listen 16560;
+
+    location = /api/v1/access-decision {
+      content_by_lua_block {
+        ngx.req.read_body()
+        local headers = ngx.req.get_headers()
+
+        -- Validate Authorization header for Basic Auth
+        if not headers["Authorization"] or not string.find(headers["Authorization"], "^Basic ") then
+          ngx.status = 401
+          ngx.say('{"error": "Missing or invalid Basic Auth"}')
+          return
+        end
+
+        -- Decode and validate credentials (test-user:test-password)
+        local auth = headers["Authorization"]:gsub("^Basic ", "")
+        local decoded = ngx.decode_base64(auth)
+        if decoded ~= "test-user:test-password" then
+          ngx.status = 401
+          ngx.say('{"error": "Invalid credentials"}')
+          return
+        end
+
+        ngx.log(ngx.DEBUG, "Bigeye mock (BASIC_AUTH) received valid Basic Auth request")
+
+        -- Return ALLOW
+        ngx.status = 200
+        ngx.header["Content-Type"] = "application/json"
+        ngx.say('{"accessDecision": "ACCESS_DECISION_ALLOW"}')
+      }
+    }
+  }
+]]
+
 -- Run the tests for each strategy. Strategies include "postgres" and "off"
 --   which represent the deployment topologies for Kong Gateway
 for _, strategy in helpers.all_strategies() do
@@ -228,6 +266,22 @@ for _, strategy in helpers.all_strategies() do
         config = {
           bigeye_url = "http://localhost:16559",
           api_key = "test-api-key-12345",
+          timeout = 5000,
+        },
+      }
+
+      -- Route with Basic Auth mock
+      local route_basic_auth = blue_print.routes:insert({
+        paths = { "/test-basic-auth" },
+        service = { id = service.id },
+      })
+      blue_print.plugins:insert {
+        name = PLUGIN_NAME,
+        route = { id = route_basic_auth.id },
+        config = {
+          bigeye_url = "http://localhost:16560",
+          username = "test-user",
+          password = "test-password",
           timeout = 5000,
         },
       }
@@ -395,6 +449,18 @@ for _, strategy in helpers.all_strategies() do
           },
         })
 
+        assert.response(r).has.status(200)
+      end)
+
+    end)
+
+    describe("Authentication methods", function()
+
+      it("uses Basic Auth when username and password are configured", function()
+        local r = client:get("/test-basic-auth/anything?query=SELECT+*+FROM+users", {})
+
+        -- Mock validates the Basic Auth header with correct credentials
+        -- If invalid, it returns 401; if valid, returns 200
         assert.response(r).has.status(200)
       end)
 

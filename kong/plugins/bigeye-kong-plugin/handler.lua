@@ -9,17 +9,31 @@ local BigeyeKongPluginHandler = {
 function BigeyeKongPluginHandler:access(conf)
   kong.log.debug("Bigeye plugin access phase triggered")
 
+  -- Warn if using HTTP instead of HTTPS for Bigeye URL
+  if conf.bigeye_url:lower():match("^http://") then
+    kong.log.warn("Bigeye URL uses HTTP instead of HTTPS. Authentication credentials will be sent in plaintext.")
+  end
+
   -- Capture request information
   local req_headers = kong.request.get_headers()
 
   -- Get authenticated consumer (set by auth plugins like key-auth, jwt, basic-auth, etc.)
   local consumer = kong.client.get_consumer()
 
+  -- Strip sensitive headers before forwarding to Bigeye to prevent credential leakage
+  local safe_req_headers = {}
+  for k, v in pairs(req_headers) do
+    local lower = k:lower()
+    if lower ~= "authorization" and lower ~= "cookie" and lower ~= "x-api-key" and lower ~= "proxy-authorization" then
+      safe_req_headers[k] = v
+    end
+  end
+
   local request_data = {
     method = kong.request.get_method(),
     path = kong.request.get_path(),
     query = kong.request.get_query(),
-    headers = req_headers,
+    headers = safe_req_headers,
     timestamp = ngx.time(),
     -- Extract AI agent metadata from headers
     agent_metadata = {
@@ -51,8 +65,14 @@ function BigeyeKongPluginHandler:access(conf)
   -- Check body for SQL if it's a table
   if type(body) == "table" then
     if body.query then
+      if request_data.sql_query then
+        kong.log.debug("SQL query in body is overriding query parameter value")
+      end
       request_data.sql_query = body.query
     elseif body.sql then
+      if request_data.sql_query then
+        kong.log.debug("SQL query in body is overriding query parameter value")
+      end
       request_data.sql_query = body.sql
     end
   end
@@ -127,21 +147,28 @@ function BigeyeKongPluginHandler:access(conf)
     body = request_body,
   })
 
-  -- Set keepalive for connection reuse
-  local ok, keepalive_err = httpc:set_keepalive(10000, 100)
-  if not ok then
-    kong.log.debug("Failed to set keepalive: ", keepalive_err)
-  end
-
   if request_err then
     kong.log.err("Failed to send request to Bigeye: ", request_err)
     -- On error, allow the request (fail open)
     return
   end
 
+  -- Set keepalive for connection reuse
+  local ok, keepalive_err = httpc:set_keepalive(10000, 100)
+  if not ok then
+    kong.log.debug("Failed to set keepalive: ", keepalive_err)
+  end
+
   kong.log.debug("Response from Bigeye - Status: ", res.status)
   kong.log.debug("Response from Bigeye - Headers: ", cjson.encode(res.headers))
   kong.log.debug("Response from Bigeye - Body: ", res.body)
+
+  -- Check HTTP status code
+  if res.status ~= 200 then
+    kong.log.err("Bigeye returned non-200 status: ", res.status, " body: ", res.body)
+    -- On error, allow the request (fail open)
+    return
+  end
 
   -- Parse the response
   local response_data, decode_err = cjson.decode(res.body)
@@ -151,7 +178,7 @@ function BigeyeKongPluginHandler:access(conf)
     return
   end
 
-  -- Check if access is denied (ACCESS_DECISION_DENY = 3)
+  -- Check if access is denied
   kong.log.debug("Response from Bigeye - response_data: ", cjson.encode(response_data))
   if response_data.accessDecision == "ACCESS_DECISION_DENY" then
     local reason = response_data.reason or "Access denied by Bigeye"

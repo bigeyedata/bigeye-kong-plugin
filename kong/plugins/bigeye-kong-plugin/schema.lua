@@ -9,7 +9,7 @@ local schema = {
           { bigeye_url = {
             type = "string",
             required = true,
-            description = "The URL of the Bigeye service to send notifications to"
+            description = "The base URL of the Bigeye service used for access-decision requests"
           } },
           { api_key = {
             type = "string",
