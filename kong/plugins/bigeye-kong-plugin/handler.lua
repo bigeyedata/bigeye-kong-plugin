@@ -6,6 +6,27 @@ local BigeyeKongPluginHandler = {
   VERSION = "0.0.1",
 }
 
+-- Helper function to parse a string into a list (array)
+-- Tries JSON decoding first, then falls back to comma-separated parsing
+local function parse_string_list(input)
+  if type(input) ~= "string" then
+    return nil
+  end
+
+  -- Try JSON decode first
+  local parsed, json_err = cjson.decode(input)
+  if not json_err and type(parsed) == "table" then
+    return parsed
+  end
+
+  -- Fall back to comma-separated parsing
+  local result = {}
+  for item in input:gmatch("([^,]+)") do
+    table.insert(result, item:match("^%s*(.-)%s*$")) -- trim whitespace
+  end
+  return result
+end
+
 function BigeyeKongPluginHandler:access(conf)
   kong.log.debug("Bigeye plugin access phase triggered")
 
@@ -112,40 +133,25 @@ function BigeyeKongPluginHandler:access(conf)
   -- Check query parameters
   if request_data.query and request_data.query.tables then
     if type(request_data.query.tables) == "string" then
-      local parsed_tables, json_err = cjson.decode(request_data.query.tables)
-      if not json_err and type(parsed_tables) == "table" then
-        request_data.tables = parsed_tables
-      else
-        -- Try splitting by comma
-        request_data.tables = {}
-        for table_name in request_data.query.tables:gmatch("([^,]+)") do
-          table.insert(request_data.tables, table_name:match("^%s*(.-)%s*$")) -- trim whitespace
-        end
-      end
+      request_data.tables = parse_string_list(request_data.query.tables)
     elseif type(request_data.query.tables) == "table" then
       request_data.tables = request_data.query.tables
     end
   end
 
   -- Check headers
-  if not request_data.tables then
-    if req_headers["x-tables"] then
-      local parsed_tables, json_err = cjson.decode(req_headers["x-tables"])
-      if not json_err and type(parsed_tables) == "table" then
-        request_data.tables = parsed_tables
-      else
-        request_data.tables = {}
-        for table_name in req_headers["x-tables"]:gmatch("([^,]+)") do
-          table.insert(request_data.tables, table_name:match("^%s*(.-)%s*$"))
-        end
-      end
-    end
+  if not request_data.tables and req_headers["x-tables"] then
+    request_data.tables = parse_string_list(req_headers["x-tables"])
   end
 
   -- Check body if it's a table
   if not request_data.tables and type(body) == "table" then
-    if body.tables and type(body.tables) == "table" then
-      request_data.tables = body.tables
+    if body.tables then
+      if type(body.tables) == "table" then
+        request_data.tables = body.tables
+      elseif type(body.tables) == "string" then
+        request_data.tables = parse_string_list(body.tables)
+      end
     end
   end
 
@@ -158,40 +164,25 @@ function BigeyeKongPluginHandler:access(conf)
   -- Check query parameters
   if request_data.query and request_data.query.columns then
     if type(request_data.query.columns) == "string" then
-      local parsed_columns, json_err = cjson.decode(request_data.query.columns)
-      if not json_err and type(parsed_columns) == "table" then
-        request_data.columns = parsed_columns
-      else
-        -- Try splitting by comma
-        request_data.columns = {}
-        for column_name in request_data.query.columns:gmatch("([^,]+)") do
-          table.insert(request_data.columns, column_name:match("^%s*(.-)%s*$")) -- trim whitespace
-        end
-      end
+      request_data.columns = parse_string_list(request_data.query.columns)
     elseif type(request_data.query.columns) == "table" then
       request_data.columns = request_data.query.columns
     end
   end
 
   -- Check headers
-  if not request_data.columns then
-    if req_headers["x-columns"] then
-      local parsed_columns, json_err = cjson.decode(req_headers["x-columns"])
-      if not json_err and type(parsed_columns) == "table" then
-        request_data.columns = parsed_columns
-      else
-        request_data.columns = {}
-        for column_name in req_headers["x-columns"]:gmatch("([^,]+)") do
-          table.insert(request_data.columns, column_name:match("^%s*(.-)%s*$"))
-        end
-      end
-    end
+  if not request_data.columns and req_headers["x-columns"] then
+    request_data.columns = parse_string_list(req_headers["x-columns"])
   end
 
   -- Check body if it's a table
   if not request_data.columns and type(body) == "table" then
-    if body.columns and type(body.columns) == "table" then
-      request_data.columns = body.columns
+    if body.columns then
+      if type(body.columns) == "table" then
+        request_data.columns = body.columns
+      elseif type(body.columns) == "string" then
+        request_data.columns = parse_string_list(body.columns)
+      end
     end
   end
 

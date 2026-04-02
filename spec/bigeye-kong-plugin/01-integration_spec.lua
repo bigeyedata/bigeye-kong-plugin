@@ -186,33 +186,37 @@ fixtures.http_mock.bigeye_validate_config = [[
         -- Parse request
         local ok, request_data = pcall(cjson.decode, body)
         if not ok then
-          ngx.status = 400
-          ngx.say('{"error": "Invalid JSON"}')
+          ngx.status = 200
+          ngx.header["Content-Type"] = "application/json"
+          ngx.say('{"accessDecision": "ACCESS_DECISION_DENY", "reason": "Invalid JSON"}')
           return
         end
 
         -- Validate that database, tables, and columns are present
         if request_data.database ~= "test_database" then
-          ngx.status = 400
-          ngx.say('{"error": "Expected database to be test_database"}')
+          ngx.status = 200
+          ngx.header["Content-Type"] = "application/json"
+          ngx.say('{"accessDecision": "ACCESS_DECISION_DENY", "reason": "Expected database to be test_database, got: ' .. tostring(request_data.database) .. '"}')
           return
         end
 
         if not request_data.tables or type(request_data.tables) ~= "table" then
-          ngx.status = 400
-          ngx.say('{"error": "Expected tables array"}')
+          ngx.status = 200
+          ngx.header["Content-Type"] = "application/json"
+          ngx.say('{"accessDecision": "ACCESS_DECISION_DENY", "reason": "Expected tables array"}')
           return
         end
 
         if not request_data.columns or type(request_data.columns) ~= "table" then
-          ngx.status = 400
-          ngx.say('{"error": "Expected columns array"}')
+          ngx.status = 200
+          ngx.header["Content-Type"] = "application/json"
+          ngx.say('{"accessDecision": "ACCESS_DECISION_DENY", "reason": "Expected columns array"}')
           return
         end
 
         ngx.log(ngx.DEBUG, "Bigeye mock (VALIDATE_CONFIG) received valid request with database: ", request_data.database)
 
-        -- Return ALLOW
+        -- Return ALLOW only if all validation passes
         ngx.status = 200
         ngx.header["Content-Type"] = "application/json"
         ngx.say('{"accessDecision": "ACCESS_DECISION_ALLOW"}')
@@ -609,24 +613,12 @@ for _, strategy in helpers.all_strategies() do
 
     describe("Configuration fields (database_name, tables, columns)", function()
 
-      it("sends database_name from config to Bigeye", function()
+      it("sends database_name, tables, and columns from config to Bigeye", function()
         local r = client:get("/test-config-fields/anything?query=SELECT+*+FROM+users", {})
 
-        -- Mock validates that database_name is sent correctly
-        assert.response(r).has.status(200)
-      end)
-
-      it("sends tables array from config to Bigeye", function()
-        local r = client:get("/test-config-fields/anything?query=SELECT+*+FROM+users", {})
-
-        -- Mock validates that tables array is sent correctly
-        assert.response(r).has.status(200)
-      end)
-
-      it("sends columns array from config to Bigeye", function()
-        local r = client:get("/test-config-fields/anything?query=SELECT+*+FROM+users", {})
-
-        -- Mock validates that columns array is sent correctly
+        -- Mock validates that all config fields are sent correctly
+        -- If validation fails, mock returns ACCESS_DECISION_DENY and plugin blocks with 403
+        -- If validation passes, mock returns ACCESS_DECISION_ALLOW and request proceeds with 200
         assert.response(r).has.status(200)
       end)
 
