@@ -192,7 +192,7 @@ fixtures.http_mock.bigeye_validate_config = [[
           return
         end
 
-        -- Validate that database, tables, and columns are present
+        -- Validate that database, tables, and columns are present and have correct values
         if request_data.database ~= "test_database" then
           ngx.status = 200
           ngx.header["Content-Type"] = "application/json"
@@ -207,10 +207,38 @@ fixtures.http_mock.bigeye_validate_config = [[
           return
         end
 
+        -- Verify tables contains expected values
+        local has_users = false
+        local has_orders = false
+        for _, table_name in ipairs(request_data.tables) do
+          if table_name == "users" then has_users = true end
+          if table_name == "orders" then has_orders = true end
+        end
+        if not (has_users and has_orders) then
+          ngx.status = 200
+          ngx.header["Content-Type"] = "application/json"
+          ngx.say('{"accessDecision": "ACCESS_DECISION_DENY", "reason": "Expected tables to contain users and orders"}')
+          return
+        end
+
         if not request_data.columns or type(request_data.columns) ~= "table" then
           ngx.status = 200
           ngx.header["Content-Type"] = "application/json"
           ngx.say('{"accessDecision": "ACCESS_DECISION_DENY", "reason": "Expected columns array"}')
+          return
+        end
+
+        -- Verify columns contains expected values
+        local has_email = false
+        local has_ssn = false
+        for _, column_name in ipairs(request_data.columns) do
+          if column_name == "email" then has_email = true end
+          if column_name == "ssn" then has_ssn = true end
+        end
+        if not (has_email and has_ssn) then
+          ngx.status = 200
+          ngx.header["Content-Type"] = "application/json"
+          ngx.say('{"accessDecision": "ACCESS_DECISION_DENY", "reason": "Expected columns to contain email and ssn"}')
           return
         end
 
