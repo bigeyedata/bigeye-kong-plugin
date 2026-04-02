@@ -1,0 +1,11 @@
+# This is a custom Nginx template that extends Kong's default template
+# It includes placeholders for injecting mock HTTP servers during tests
+
+> if http_mock_servers and #http_mock_servers > 0 then
+$(http_mock_servers)
+> end
+
+# Include the default Kong nginx template
+> return [[
+include ']] .. kong_conf .. [['
+]]
