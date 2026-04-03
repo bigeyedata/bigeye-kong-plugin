@@ -30,11 +30,39 @@ local schema = {
             referenceable = true,
             description = "Password for Basic Auth with Bigeye service"
           } },
+          { workspace_id = {
+            type = "number",
+            required = true,
+            encrypted = true,
+            referenceable = true,
+            description = "Bigeye Workspace ID"
+          } },
           { timeout = {
             type = "number",
             required = false,
             default = 5000,
             description = "Timeout in milliseconds for the HTTP request to Bigeye"
+          } },
+          { database_name = {
+            type = "string",
+            required = false,
+            description = "The name of the database to query"
+          } },
+          { tables = {
+            type = "array",
+            required = false,
+            elements = {
+              type = "string",
+            },
+            description = "List of table names as strings"
+          } },
+          { columns = {
+            type = "array",
+            required = false,
+            elements = {
+              type = "string",
+            },
+            description = "List of column names as strings"
           } },
         },
         entity_checks = {

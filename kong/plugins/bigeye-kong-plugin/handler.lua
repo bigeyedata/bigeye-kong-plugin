@@ -6,6 +6,27 @@ local BigeyeKongPluginHandler = {
   VERSION = "0.0.1",
 }
 
+-- Helper function to parse a string into a list (array)
+-- Tries JSON decoding first, then falls back to comma-separated parsing
+local function parse_string_list(input)
+  if type(input) ~= "string" then
+    return nil
+  end
+
+  -- Try JSON decode first
+  local parsed, json_err = cjson.decode(input)
+  if not json_err and type(parsed) == "table" then
+    return parsed
+  end
+
+  -- Fall back to comma-separated parsing
+  local result = {}
+  for item in input:gmatch("([^,]+)") do
+    table.insert(result, item:match("^%s*(.-)%s*$")) -- trim whitespace
+  end
+  return result
+end
+
 function BigeyeKongPluginHandler:access(conf)
   kong.log.debug("Bigeye plugin access phase triggered")
 
@@ -35,6 +56,7 @@ function BigeyeKongPluginHandler:access(conf)
     query = kong.request.get_query(),
     headers = safe_req_headers,
     timestamp = ngx.time(),
+    workspace = conf.workspace_id,
     -- Extract AI agent metadata from headers
     agent_metadata = {
       agent_id = req_headers["x-ai-agent-id"],
@@ -57,23 +79,23 @@ function BigeyeKongPluginHandler:access(conf)
   -- Extract SQL query if present in common locations
   -- Check query parameters for SQL
   if request_data.query and request_data.query.query then
-    request_data.sql_query = request_data.query.query
+    request_data.sql = request_data.query.query
   elseif request_data.query and request_data.query.sql then
-    request_data.sql_query = request_data.query.sql
+    request_data.sql = request_data.query.sql
   end
 
   -- Check body for SQL if it's a table
   if type(body) == "table" then
     if body.query then
-      if request_data.sql_query then
+      if request_data.sql then
         kong.log.debug("SQL query in body is overriding query parameter value")
       end
-      request_data.sql_query = body.query
+      request_data.sql = body.query
     elseif body.sql then
-      if request_data.sql_query then
+      if request_data.sql then
         kong.log.debug("SQL query in body is overriding query parameter value")
       end
-      request_data.sql_query = body.sql
+      request_data.sql = body.sql
     end
   end
 
@@ -101,6 +123,73 @@ function BigeyeKongPluginHandler:access(conf)
     elseif body.db then
       request_data.database = body.db
     end
+  end
+
+  -- Use database_name from config if not found in request
+  if not request_data.database and conf.database_name then
+    request_data.database = conf.database_name
+  end
+
+  -- Extract tables from common locations
+  -- Check query parameters
+  if request_data.query and request_data.query.tables then
+    if type(request_data.query.tables) == "string" then
+      request_data.tables = parse_string_list(request_data.query.tables)
+    elseif type(request_data.query.tables) == "table" then
+      request_data.tables = request_data.query.tables
+    end
+  end
+
+  -- Check headers
+  if not request_data.tables and req_headers["x-tables"] then
+    request_data.tables = parse_string_list(req_headers["x-tables"])
+  end
+
+  -- Check body if it's a table
+  if not request_data.tables and type(body) == "table" then
+    if body.tables then
+      if type(body.tables) == "table" then
+        request_data.tables = body.tables
+      elseif type(body.tables) == "string" then
+        request_data.tables = parse_string_list(body.tables)
+      end
+    end
+  end
+
+  -- Use tables from config if not found in request
+  if not request_data.tables and conf.tables then
+    request_data.tables = conf.tables
+  end
+
+  -- Extract columns from common locations
+  -- Check query parameters
+  if request_data.query and request_data.query.columns then
+    if type(request_data.query.columns) == "string" then
+      request_data.columns = parse_string_list(request_data.query.columns)
+    elseif type(request_data.query.columns) == "table" then
+      request_data.columns = request_data.query.columns
+    end
+  end
+
+  -- Check headers
+  if not request_data.columns and req_headers["x-columns"] then
+    request_data.columns = parse_string_list(req_headers["x-columns"])
+  end
+
+  -- Check body if it's a table
+  if not request_data.columns and type(body) == "table" then
+    if body.columns then
+      if type(body.columns) == "table" then
+        request_data.columns = body.columns
+      elseif type(body.columns) == "string" then
+        request_data.columns = parse_string_list(body.columns)
+      end
+    end
+  end
+
+  -- Use columns from config if not found in request
+  if not request_data.columns and conf.columns then
+    request_data.columns = conf.columns
   end
 
   -- Send to Bigeye synchronously (we need to block on the response)

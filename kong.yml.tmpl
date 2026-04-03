@@ -24,4 +24,14 @@ services:
           bigeye_url: http://host.docker.internal:8080
           username: <username>
           password: <password>
+          workspace_id: <workspace_id>
           timeout: 5000
+          database_name: test_database
+          tables:
+            - users
+            - orders
+            - products
+          columns:
+            - email
+            - phone_number
+            - address
