@@ -56,6 +56,7 @@ function BigeyeKongPluginHandler:access(conf)
     query = kong.request.get_query(),
     headers = safe_req_headers,
     timestamp = ngx.time(),
+    workspace = conf.workspace_id,
     -- Extract AI agent metadata from headers
     agent_metadata = {
       agent_id = req_headers["x-ai-agent-id"],

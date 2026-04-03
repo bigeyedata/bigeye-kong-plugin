@@ -30,6 +30,13 @@ local schema = {
             referenceable = true,
             description = "Password for Basic Auth with Bigeye service"
           } },
+          { workspace_id = {
+            type = "number",
+            required = true,
+            encrypted = true,
+            referenceable = true,
+            description = "Bigeye Workspace ID"
+          } },
           { timeout = {
             type = "number",
             required = false,

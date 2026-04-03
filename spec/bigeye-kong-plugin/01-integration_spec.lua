@@ -343,6 +343,7 @@ for _, strategy in helpers.all_strategies() do
         config = {
           bigeye_url = "http://localhost:16555",
           api_key = "test-api-key-12345",
+          workspace_id = 123,
           timeout = 5000,
         },
       }
@@ -358,6 +359,7 @@ for _, strategy in helpers.all_strategies() do
         config = {
           bigeye_url = "http://localhost:16556",
           api_key = "test-api-key-12345",
+          workspace_id = 123,
           timeout = 5000,
         },
       }
@@ -373,6 +375,7 @@ for _, strategy in helpers.all_strategies() do
         config = {
           bigeye_url = "http://localhost:16557",
           api_key = "test-api-key-12345",
+          workspace_id = 123,
           timeout = 1000, -- Short timeout to trigger fail-open
         },
       }
@@ -388,6 +391,7 @@ for _, strategy in helpers.all_strategies() do
         config = {
           bigeye_url = "http://localhost:16558",
           api_key = "test-api-key-12345",
+          workspace_id = 123,
           timeout = 5000,
         },
       }
@@ -403,6 +407,7 @@ for _, strategy in helpers.all_strategies() do
         config = {
           bigeye_url = "http://localhost:16559",
           api_key = "test-api-key-12345",
+          workspace_id = 123,
           timeout = 5000,
         },
       }
@@ -419,6 +424,7 @@ for _, strategy in helpers.all_strategies() do
           bigeye_url = "http://localhost:16560",
           username = "test-user",
           password = "test-password",
+          workspace_id = 123,
           timeout = 5000,
         },
       }
@@ -434,6 +440,7 @@ for _, strategy in helpers.all_strategies() do
         config = {
           bigeye_url = "http://localhost:16561",
           api_key = "test-api-key-12345",
+          workspace_id = 123,
           timeout = 5000,
           database_name = "test_database",
           tables = { "users", "orders" },
@@ -452,6 +459,7 @@ for _, strategy in helpers.all_strategies() do
         config = {
           bigeye_url = "http://localhost:16562",
           api_key = "test-api-key-12345",
+          workspace_id = 123,
           timeout = 5000,
           database_name = "config_database",
           tables = { "config_table" },
