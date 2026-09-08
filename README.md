@@ -41,7 +41,7 @@ The plugin extracts database context from the request before sending it to Bigey
 
 Tables and columns in query params and headers can be provided as a JSON array or a comma-separated string.
 
-Sensitive headers (`Authorization`, `Cookie`, `x-api-key`, `Proxy-Authorization`) are stripped before sending request data to Bigeye.
+Sensitive headers (`Authorization`, `Cookie`, `x-api-key`, `Proxy-Authorization`) are stripped before sending request data to Bigeye; note that the `apikey` header used by Kong's key-auth plugin is not currently stripped.
 
 ## Local development
 
