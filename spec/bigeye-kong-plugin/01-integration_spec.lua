@@ -253,6 +253,44 @@ fixtures.http_mock.bigeye_validate_config = [[
   }
 ]]
 
+-- Mock Bigeye server that validates conversation_external_id is forwarded
+fixtures.http_mock.bigeye_validate_conversation = [[
+  server {
+    server_name bigeye_mock_validate_conversation;
+    listen 16563;
+
+    location = /api/v1/access-decision {
+      content_by_lua_block {
+        ngx.req.read_body()
+        local body = ngx.req.get_body_data()
+        local cjson = require "cjson"
+
+        local ok, request_data = pcall(cjson.decode, body)
+        if not ok then
+          ngx.status = 400
+          ngx.say('{"error": "Invalid JSON"}')
+          return
+        end
+
+        -- Validate that conversation_external_id is present and matches expected value
+        if request_data.conversation_external_id ~= "test-conversation-123" then
+          ngx.status = 200
+          ngx.header["Content-Type"] = "application/json"
+          ngx.say(cjson.encode({
+            accessDecision = "ACCESS_DECISION_DENY",
+            reason = "Expected conversation_external_id to be test-conversation-123, got: " .. tostring(request_data.conversation_external_id)
+          }))
+          return
+        end
+
+        ngx.status = 200
+        ngx.header["Content-Type"] = "application/json"
+        ngx.say('{"accessDecision": "ACCESS_DECISION_ALLOW"}')
+      }
+    }
+  }
+]]
+
 -- Mock Bigeye server that validates request overrides config
 fixtures.http_mock.bigeye_validate_override = [[
   server {
@@ -445,6 +483,22 @@ for _, strategy in helpers.all_strategies() do
           database_name = "test_database",
           tables = { "users", "orders" },
           columns = { "email", "ssn" },
+        },
+      }
+
+      -- Route with conversation validation mock
+      local route_conversation = blue_print.routes:insert({
+        paths = { "/test-conversation" },
+        service = { id = service.id },
+      })
+      blue_print.plugins:insert {
+        name = PLUGIN_NAME,
+        route = { id = route_conversation.id },
+        config = {
+          bigeye_url = "http://localhost:16563",
+          api_key = "test-api-key-12345",
+          workspace_id = 123,
+          timeout = 5000,
         },
       }
 
@@ -655,6 +709,41 @@ for _, strategy in helpers.all_strategies() do
         -- Mock validates that all config fields are sent correctly
         -- If validation fails, mock returns ACCESS_DECISION_DENY and plugin blocks with 403
         -- If validation passes, mock returns ACCESS_DECISION_ALLOW and request proceeds with 200
+        assert.response(r).has.status(200)
+      end)
+
+    end)
+
+    describe("Conversation/session ID forwarding", function()
+
+      it("forwards x-conversation-id header as conversation_external_id", function()
+        local r = client:get("/test-conversation/anything", {
+          headers = {
+            ["x-conversation-id"] = "test-conversation-123",
+          },
+        })
+
+        assert.response(r).has.status(200)
+      end)
+
+      it("falls back to x-session-id as conversation_external_id when x-conversation-id is absent", function()
+        local r = client:get("/test-conversation/anything", {
+          headers = {
+            ["x-session-id"] = "test-conversation-123",
+          },
+        })
+
+        assert.response(r).has.status(200)
+      end)
+
+      it("prefers x-conversation-id over x-session-id", function()
+        local r = client:get("/test-conversation/anything", {
+          headers = {
+            ["x-conversation-id"] = "test-conversation-123",
+            ["x-session-id"] = "different-session-456",
+          },
+        })
+
         assert.response(r).has.status(200)
       end)
 
