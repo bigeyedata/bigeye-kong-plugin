@@ -66,6 +66,9 @@ function BigeyeKongPluginHandler:access(conf)
     },
     -- Include only consumer custom_id (null if no consumer)
     consumer = consumer and consumer.custom_id or nil,
+    -- Conversation/session identifier for Datawatch (x-conversation-id takes precedence over x-session-id).
+    -- get_header() is used instead of get_headers() to guarantee a single string even if the header is repeated.
+    conversation_external_id = kong.request.get_header("x-conversation-id") or kong.request.get_header("x-session-id"),
   }
 
   -- Try to capture the request body if it exists (may contain SQL queries)
