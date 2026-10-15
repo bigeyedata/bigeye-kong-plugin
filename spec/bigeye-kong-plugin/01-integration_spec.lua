@@ -291,6 +291,44 @@ fixtures.http_mock.bigeye_validate_conversation = [[
   }
 ]]
 
+-- Mock Bigeye server that validates agent_external_id is forwarded
+fixtures.http_mock.bigeye_validate_agent = [[
+  server {
+    server_name bigeye_mock_validate_agent;
+    listen 16564;
+
+    location = /api/v1/access-decision {
+      content_by_lua_block {
+        ngx.req.read_body()
+        local body = ngx.req.get_body_data()
+        local cjson = require "cjson"
+
+        local ok, request_data = pcall(cjson.decode, body)
+        if not ok then
+          ngx.status = 400
+          ngx.say('{"error": "Invalid JSON"}')
+          return
+        end
+
+        -- Validate that agent_external_id is present and matches expected value
+        if request_data.agent_external_id ~= "test-agent-abc" then
+          ngx.status = 200
+          ngx.header["Content-Type"] = "application/json"
+          ngx.say(cjson.encode({
+            accessDecision = "ACCESS_DECISION_DENY",
+            reason = "Expected agent_external_id to be test-agent-abc, got: " .. tostring(request_data.agent_external_id)
+          }))
+          return
+        end
+
+        ngx.status = 200
+        ngx.header["Content-Type"] = "application/json"
+        ngx.say('{"accessDecision": "ACCESS_DECISION_ALLOW"}')
+      }
+    }
+  }
+]]
+
 -- Mock Bigeye server that validates request overrides config
 fixtures.http_mock.bigeye_validate_override = [[
   server {
@@ -496,6 +534,22 @@ for _, strategy in helpers.all_strategies() do
         route = { id = route_conversation.id },
         config = {
           bigeye_url = "http://localhost:16563",
+          api_key = "test-api-key-12345",
+          workspace_id = 123,
+          timeout = 5000,
+        },
+      }
+
+      -- Route with agent external id validation mock
+      local route_agent = blue_print.routes:insert({
+        paths = { "/test-agent" },
+        service = { id = service.id },
+      })
+      blue_print.plugins:insert {
+        name = PLUGIN_NAME,
+        route = { id = route_agent.id },
+        config = {
+          bigeye_url = "http://localhost:16564",
           api_key = "test-api-key-12345",
           workspace_id = 123,
           timeout = 5000,
@@ -741,6 +795,20 @@ for _, strategy in helpers.all_strategies() do
           headers = {
             ["x-conversation-id"] = "test-conversation-123",
             ["x-session-id"] = "different-session-456",
+          },
+        })
+
+        assert.response(r).has.status(200)
+      end)
+
+    end)
+
+    describe("Agent external ID forwarding", function()
+
+      it("forwards x-agent-id header as agent_external_id", function()
+        local r = client:get("/test-agent/anything", {
+          headers = {
+            ["x-agent-id"] = "test-agent-abc",
           },
         })
 
