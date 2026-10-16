@@ -124,23 +124,23 @@ function BigeyeKongPluginHandler:access(conf)
     columns = conf.columns
   end
 
-  -- Build access_objects array matching AccessDecisionRequest proto schema.
-  -- ACCESS_OBJECT_TYPE: COLUMN=1, TABLE=2, SQL=3
+  -- Build accessObjects array matching AccessDecisionRequest proto JSON (camelCase).
+  -- AccessObjectType: COLUMN=1, TABLE=2, SQL=3
   local access_objects = {}
   if sql then
     table.insert(access_objects, {
       type = 3,
-      source_type = conf.warehouse_type,
-      source_name = database,
-      external_id = sql,
+      sourceType = conf.warehouse_type,
+      sourceName = database,
+      externalId = sql,
     })
   end
   if tables then
     for _, table_name in ipairs(tables) do
       table.insert(access_objects, {
         type = 2,
-        source_type = conf.warehouse_type,
-        source_name = table_name,
+        sourceType = conf.warehouse_type,
+        sourceName = table_name,
       })
     end
   end
@@ -148,27 +148,28 @@ function BigeyeKongPluginHandler:access(conf)
     for _, column_name in ipairs(columns) do
       table.insert(access_objects, {
         type = 1,
-        source_type = conf.warehouse_type,
-        source_name = column_name,
+        sourceType = conf.warehouse_type,
+        sourceName = column_name,
       })
     end
   end
 
-  -- Build ai_agent from x-ai-agent-id header if present
+  -- Build aiAgent from x-ai-agent-id header if present
   local ai_agent_external_id = req_headers["x-ai-agent-id"]
-  local ai_agent = ai_agent_external_id and { external_id = ai_agent_external_id } or nil
+  local ai_agent = ai_agent_external_id and { externalId = ai_agent_external_id } or nil
 
+  -- Proto3 JSON uses camelCase field names
   local request_data = {
     operation = kong.request.get_method(),
     path = kong.request.get_path(),
     timestamp = ngx.time(),
     workspace = conf.workspace_id,
-    ai_agent = ai_agent,
-    access_objects = #access_objects > 0 and access_objects or nil,
+    aiAgent = ai_agent,
+    accessObjects = #access_objects > 0 and access_objects or nil,
     -- get_header() guarantees a single string even if the header is repeated
-    agent_external_id = kong.request.get_header("x-agent-id"),
+    agentExternalId = kong.request.get_header("x-agent-id"),
     -- x-conversation-id takes precedence over x-session-id
-    conversation_external_id = kong.request.get_header("x-conversation-id") or kong.request.get_header("x-session-id"),
+    conversationExternalId = kong.request.get_header("x-conversation-id") or kong.request.get_header("x-session-id"),
   }
 
   -- Send to Bigeye synchronously (we need to block on the response)
