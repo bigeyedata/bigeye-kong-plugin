@@ -171,7 +171,7 @@ fixtures.http_mock.bigeye_basic_auth = [[
   }
 ]]
 
--- Mock Bigeye server that validates database_name, tables, and columns
+-- Mock Bigeye server that validates database_name, tables, and columns via access_objects
 fixtures.http_mock.bigeye_validate_config = [[
   server {
     server_name bigeye_mock_validate_config;
@@ -192,57 +192,56 @@ fixtures.http_mock.bigeye_validate_config = [[
           return
         end
 
-        -- Validate that database, tables, and columns are present and have correct values
-        if request_data.database ~= "test_database" then
+        -- Validate that access_objects is present
+        if not request_data.access_objects or type(request_data.access_objects) ~= "table" then
           ngx.status = 200
           ngx.header["Content-Type"] = "application/json"
-          ngx.say('{"accessDecision": "ACCESS_DECISION_DENY", "reason": "Expected database to be test_database, got: ' .. tostring(request_data.database) .. '"}')
+          ngx.say('{"accessDecision": "ACCESS_DECISION_DENY", "reason": "Expected access_objects array"}')
           return
         end
 
-        if not request_data.tables or type(request_data.tables) ~= "table" then
-          ngx.status = 200
-          ngx.header["Content-Type"] = "application/json"
-          ngx.say('{"accessDecision": "ACCESS_DECISION_DENY", "reason": "Expected tables array"}')
-          return
-        end
-
-        -- Verify tables contains expected values
+        -- Scan access_objects for expected entries
+        -- ACCESS_OBJECT_TYPE: COLUMN=1, TABLE=2, SQL=3
         local has_users = false
         local has_orders = false
-        for _, table_name in ipairs(request_data.tables) do
-          if table_name == "users" then has_users = true end
-          if table_name == "orders" then has_orders = true end
+        local has_email = false
+        local has_ssn = false
+        local has_database = false
+
+        for _, obj in ipairs(request_data.access_objects) do
+          if obj.type == 2 then
+            if obj.source_name == "users" then has_users = true end
+            if obj.source_name == "orders" then has_orders = true end
+          elseif obj.type == 1 then
+            if obj.source_name == "email" then has_email = true end
+            if obj.source_name == "ssn" then has_ssn = true end
+          elseif obj.type == 3 then
+            if obj.source_name == "test_database" then has_database = true end
+          end
         end
+
         if not (has_users and has_orders) then
           ngx.status = 200
           ngx.header["Content-Type"] = "application/json"
-          ngx.say('{"accessDecision": "ACCESS_DECISION_DENY", "reason": "Expected tables to contain users and orders"}')
+          ngx.say('{"accessDecision": "ACCESS_DECISION_DENY", "reason": "Expected access_objects to contain users and orders tables"}')
           return
         end
 
-        if not request_data.columns or type(request_data.columns) ~= "table" then
-          ngx.status = 200
-          ngx.header["Content-Type"] = "application/json"
-          ngx.say('{"accessDecision": "ACCESS_DECISION_DENY", "reason": "Expected columns array"}')
-          return
-        end
-
-        -- Verify columns contains expected values
-        local has_email = false
-        local has_ssn = false
-        for _, column_name in ipairs(request_data.columns) do
-          if column_name == "email" then has_email = true end
-          if column_name == "ssn" then has_ssn = true end
-        end
         if not (has_email and has_ssn) then
           ngx.status = 200
           ngx.header["Content-Type"] = "application/json"
-          ngx.say('{"accessDecision": "ACCESS_DECISION_DENY", "reason": "Expected columns to contain email and ssn"}')
+          ngx.say('{"accessDecision": "ACCESS_DECISION_DENY", "reason": "Expected access_objects to contain email and ssn columns"}')
           return
         end
 
-        ngx.log(ngx.DEBUG, "Bigeye mock (VALIDATE_CONFIG) received valid request with database: ", request_data.database)
+        if not has_database then
+          ngx.status = 200
+          ngx.header["Content-Type"] = "application/json"
+          ngx.say('{"accessDecision": "ACCESS_DECISION_DENY", "reason": "Expected access_objects SQL entry with source_name test_database"}')
+          return
+        end
+
+        ngx.log(ngx.DEBUG, "Bigeye mock (VALIDATE_CONFIG) received valid access_objects")
 
         -- Return ALLOW only if all validation passes
         ngx.status = 200
@@ -329,7 +328,7 @@ fixtures.http_mock.bigeye_validate_agent = [[
   }
 ]]
 
--- Mock Bigeye server that validates request overrides config
+-- Mock Bigeye server that validates request overrides config via access_objects
 fixtures.http_mock.bigeye_validate_override = [[
   server {
     server_name bigeye_mock_validate_override;
@@ -349,27 +348,29 @@ fixtures.http_mock.bigeye_validate_override = [[
           return
         end
 
-        -- Validate that request values override config values
-        if request_data.database ~= "override_database" then
-          ngx.status = 400
-          ngx.say(cjson.encode({error = "Expected database to be override_database, got: " .. tostring(request_data.database)}))
-          return
-        end
-
-        -- Check that tables contains "override_table"
+        -- Validate that access_objects contains override_table (TABLE type=2)
+        -- and does NOT contain config_table, proving request values overrode config values
         local found_override_table = false
-        if request_data.tables and type(request_data.tables) == "table" then
-          for _, table_name in ipairs(request_data.tables) do
-            if table_name == "override_table" then
-              found_override_table = true
-              break
+        if request_data.access_objects and type(request_data.access_objects) == "table" then
+          for _, obj in ipairs(request_data.access_objects) do
+            if obj.type == 2 then
+              if obj.source_name == "config_table" then
+                ngx.status = 200
+                ngx.header["Content-Type"] = "application/json"
+                ngx.say('{"accessDecision": "ACCESS_DECISION_DENY", "reason": "config_table should have been overridden by request"}')
+                return
+              end
+              if obj.source_name == "override_table" then
+                found_override_table = true
+              end
             end
           end
         end
 
         if not found_override_table then
-          ngx.status = 400
-          ngx.say('{"error": "Expected tables to contain override_table"}')
+          ngx.status = 200
+          ngx.header["Content-Type"] = "application/json"
+          ngx.say('{"accessDecision": "ACCESS_DECISION_DENY", "reason": "Expected access_objects to contain override_table"}')
           return
         end
 

@@ -64,6 +64,12 @@ local schema = {
             },
             description = "List of column names as strings"
           } },
+          { warehouse_type = {
+            type = "number",
+            required = false,
+            default = 0,
+            description = "WarehouseType enum value for AccessObject.source_type (0=unspecified, 10=Snowflake, 2=BigQuery, etc.)"
+          } },
         },
         entity_checks = {
           { mutually_required = { "username", "password" } },
