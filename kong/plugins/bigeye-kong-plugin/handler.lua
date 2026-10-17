@@ -35,165 +35,142 @@ function BigeyeKongPluginHandler:access(conf)
     kong.log.warn("Bigeye URL uses HTTP instead of HTTPS. Authentication credentials will be sent in plaintext.")
   end
 
-  -- Capture request information
   local req_headers = kong.request.get_headers()
-
-  -- Get authenticated consumer (set by auth plugins like key-auth, jwt, basic-auth, etc.)
-  local consumer = kong.client.get_consumer()
-
-  -- Strip sensitive headers before forwarding to Bigeye to prevent credential leakage
-  local safe_req_headers = {}
-  for k, v in pairs(req_headers) do
-    local lower = k:lower()
-    if lower ~= "authorization" and lower ~= "cookie" and lower ~= "x-api-key" and lower ~= "proxy-authorization" then
-      safe_req_headers[k] = v
-    end
-  end
-
-  local request_data = {
-    method = kong.request.get_method(),
-    path = kong.request.get_path(),
-    query = kong.request.get_query(),
-    headers = safe_req_headers,
-    timestamp = ngx.time(),
-    workspace = conf.workspace_id,
-    -- Extract AI agent metadata from headers
-    agent_metadata = {
-      agent_id = req_headers["x-ai-agent-id"],
-      agent_type = req_headers["x-ai-agent-type"],
-      user_id = req_headers["x-user-id"],
-      session_id = req_headers["x-session-id"],
-    },
-    -- Include only consumer custom_id (null if no consumer)
-    consumer = consumer and consumer.custom_id or nil,
-    -- Conversation/session identifier for Datawatch (x-conversation-id takes precedence over x-session-id).
-    -- get_header() is used instead of get_headers() to guarantee a single string even if the header is repeated.
-    conversation_external_id = kong.request.get_header("x-conversation-id") or kong.request.get_header("x-session-id"),
-  }
+  local req_query = kong.request.get_query()
 
   -- Try to capture the request body if it exists (may contain SQL queries)
   local body, body_err = kong.request.get_body()
   if body_err then
     kong.log.warn("Failed to read request body: ", body_err)
-  elseif body then
-    request_data.body = body
   end
 
-  -- Extract SQL query if present in common locations
-  -- Check query parameters for SQL
-  if request_data.query and request_data.query.query then
-    request_data.sql = request_data.query.query
-  elseif request_data.query and request_data.query.sql then
-    request_data.sql = request_data.query.sql
+  -- Extract SQL query from query parameters, then body (body takes precedence)
+  local sql
+  if req_query.query then
+    sql = req_query.query
+  elseif req_query.sql then
+    sql = req_query.sql
   end
-
-  -- Check body for SQL if it's a table
   if type(body) == "table" then
     if body.query then
-      if request_data.sql then
-        kong.log.debug("SQL query in body is overriding query parameter value")
-      end
-      request_data.sql = body.query
+      if sql then kong.log.debug("SQL query in body is overriding query parameter value") end
+      sql = body.query
     elseif body.sql then
-      if request_data.sql then
-        kong.log.debug("SQL query in body is overriding query parameter value")
-      end
-      request_data.sql = body.sql
+      if sql then kong.log.debug("SQL query in body is overriding query parameter value") end
+      sql = body.sql
     end
   end
 
-  -- Extract database name from common locations
-  -- Check query parameters
-  if request_data.query and request_data.query.database then
-    request_data.database = request_data.query.database
-  elseif request_data.query and request_data.query.db then
-    request_data.database = request_data.query.db
+  -- Extract database name: query param > header > body > config
+  local database
+  if req_query.database then
+    database = req_query.database
+  elseif req_query.db then
+    database = req_query.db
+  end
+  if not database then
+    database = req_headers["x-database"] or req_headers["x-db-name"]
+  end
+  if not database and type(body) == "table" then
+    database = body.database or body.db
+  end
+  if not database and conf.database_name then
+    database = conf.database_name
   end
 
-  -- Check headers
-  if not request_data.database then
-    if req_headers["x-database"] then
-      request_data.database = req_headers["x-database"]
-    elseif req_headers["x-db-name"] then
-      request_data.database = req_headers["x-db-name"]
+  -- Extract table names: query param > header > body > config
+  local tables
+  if req_query.tables then
+    if type(req_query.tables) == "string" then
+      tables = parse_string_list(req_query.tables)
+    elseif type(req_query.tables) == "table" then
+      tables = req_query.tables
+    end
+  end
+  if not tables and req_headers["x-tables"] then
+    tables = parse_string_list(req_headers["x-tables"])
+  end
+  if not tables and type(body) == "table" and body.tables then
+    if type(body.tables) == "table" then
+      tables = body.tables
+    elseif type(body.tables) == "string" then
+      tables = parse_string_list(body.tables)
+    end
+  end
+  if not tables and conf.tables then
+    tables = conf.tables
+  end
+
+  -- Extract column names: query param > header > body > config
+  local columns
+  if req_query.columns then
+    if type(req_query.columns) == "string" then
+      columns = parse_string_list(req_query.columns)
+    elseif type(req_query.columns) == "table" then
+      columns = req_query.columns
+    end
+  end
+  if not columns and req_headers["x-columns"] then
+    columns = parse_string_list(req_headers["x-columns"])
+  end
+  if not columns and type(body) == "table" and body.columns then
+    if type(body.columns) == "table" then
+      columns = body.columns
+    elseif type(body.columns) == "string" then
+      columns = parse_string_list(body.columns)
+    end
+  end
+  if not columns and conf.columns then
+    columns = conf.columns
+  end
+
+  -- Build accessObjects array matching AccessDecisionRequest proto JSON (camelCase).
+  -- AccessObjectType: COLUMN=1, TABLE=2, SQL=3
+  local access_objects = {}
+  if sql then
+    table.insert(access_objects, {
+      type = 3,
+      sourceType = conf.warehouse_type,
+      sourceName = database,
+      externalId = sql,
+    })
+  end
+  if tables then
+    for _, table_name in ipairs(tables) do
+      table.insert(access_objects, {
+        type = 2,
+        sourceType = conf.warehouse_type,
+        sourceName = table_name,
+      })
+    end
+  end
+  if columns then
+    for _, column_name in ipairs(columns) do
+      table.insert(access_objects, {
+        type = 1,
+        sourceType = conf.warehouse_type,
+        sourceName = column_name,
+      })
     end
   end
 
-  -- Check body if it's a table
-  if not request_data.database and type(body) == "table" then
-    if body.database then
-      request_data.database = body.database
-    elseif body.db then
-      request_data.database = body.db
-    end
-  end
+  -- Build aiAgent from x-ai-agent-id header if present
+  local ai_agent_external_id = req_headers["x-ai-agent-id"]
+  local ai_agent = ai_agent_external_id and { externalId = ai_agent_external_id } or nil
 
-  -- Use database_name from config if not found in request
-  if not request_data.database and conf.database_name then
-    request_data.database = conf.database_name
-  end
-
-  -- Extract tables from common locations
-  -- Check query parameters
-  if request_data.query and request_data.query.tables then
-    if type(request_data.query.tables) == "string" then
-      request_data.tables = parse_string_list(request_data.query.tables)
-    elseif type(request_data.query.tables) == "table" then
-      request_data.tables = request_data.query.tables
-    end
-  end
-
-  -- Check headers
-  if not request_data.tables and req_headers["x-tables"] then
-    request_data.tables = parse_string_list(req_headers["x-tables"])
-  end
-
-  -- Check body if it's a table
-  if not request_data.tables and type(body) == "table" then
-    if body.tables then
-      if type(body.tables) == "table" then
-        request_data.tables = body.tables
-      elseif type(body.tables) == "string" then
-        request_data.tables = parse_string_list(body.tables)
-      end
-    end
-  end
-
-  -- Use tables from config if not found in request
-  if not request_data.tables and conf.tables then
-    request_data.tables = conf.tables
-  end
-
-  -- Extract columns from common locations
-  -- Check query parameters
-  if request_data.query and request_data.query.columns then
-    if type(request_data.query.columns) == "string" then
-      request_data.columns = parse_string_list(request_data.query.columns)
-    elseif type(request_data.query.columns) == "table" then
-      request_data.columns = request_data.query.columns
-    end
-  end
-
-  -- Check headers
-  if not request_data.columns and req_headers["x-columns"] then
-    request_data.columns = parse_string_list(req_headers["x-columns"])
-  end
-
-  -- Check body if it's a table
-  if not request_data.columns and type(body) == "table" then
-    if body.columns then
-      if type(body.columns) == "table" then
-        request_data.columns = body.columns
-      elseif type(body.columns) == "string" then
-        request_data.columns = parse_string_list(body.columns)
-      end
-    end
-  end
-
-  -- Use columns from config if not found in request
-  if not request_data.columns and conf.columns then
-    request_data.columns = conf.columns
-  end
+  -- Proto3 JSON uses camelCase field names
+  local request_data = {
+    operation = kong.request.get_method(),
+    path = kong.request.get_path(),
+    timestamp = ngx.time(),
+    workspace = conf.workspace_id,
+    aiAgent = ai_agent,
+    accessObjects = #access_objects > 0 and access_objects or nil,
+    -- get_header() guarantees a single string even if the header is repeated
+    agentExternalId = kong.request.get_header("x-agent-id"),
+    -- x-conversation-id takes precedence over x-session-id
+    conversationExternalId = kong.request.get_header("x-conversation-id") or kong.request.get_header("x-session-id"),
+  }
 
   -- Send to Bigeye synchronously (we need to block on the response)
   local httpc = http.new()
