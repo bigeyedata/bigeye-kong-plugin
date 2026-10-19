@@ -76,6 +76,11 @@ local schema = {
             default = false,
             description = "When true, instructs Bigeye to evaluate the policy engine for the conversation in the request"
           } },
+          { evaluate_policy_timeout = {
+            type = "number",
+            required = false,
+            description = "Timeout in milliseconds for access-decision requests when evaluate_policy is true; falls back to timeout when unset"
+          } },
         },
         entity_checks = {
           { mutually_required = { "username", "password" } },

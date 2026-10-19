@@ -176,7 +176,8 @@ function BigeyeKongPluginHandler:access(conf)
 
   -- Send to Bigeye synchronously (we need to block on the response)
   local httpc = http.new()
-  httpc:set_timeout(conf.timeout)
+  local timeout = (conf.evaluate_policy and conf.evaluate_policy_timeout) or conf.timeout
+  httpc:set_timeout(timeout)
 
   -- Prepare headers
   local bigeye_headers = {
