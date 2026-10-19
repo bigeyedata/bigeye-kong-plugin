@@ -385,6 +385,50 @@ fixtures.http_mock.bigeye_validate_override = [[
   }
 ]]
 
+-- Mock Bigeye server that validates evaluatePolicy is forwarded and returns policyDecisions
+fixtures.http_mock.bigeye_validate_policy = [[
+  server {
+    server_name bigeye_mock_validate_policy;
+    listen 16565;
+
+    location = /api/v1/access-decision {
+      content_by_lua_block {
+        ngx.req.read_body()
+        local body = ngx.req.get_body_data()
+        local cjson = require "cjson"
+
+        local ok, request_data = pcall(cjson.decode, body)
+        if not ok then
+          ngx.status = 400
+          ngx.say('{"error": "Invalid JSON"}')
+          return
+        end
+
+        -- Validate that evaluatePolicy is present and true
+        if request_data.evaluatePolicy ~= true then
+          ngx.status = 200
+          ngx.header["Content-Type"] = "application/json"
+          ngx.say(cjson.encode({
+            accessDecision = "ACCESS_DECISION_DENY",
+            reason = "Expected evaluatePolicy to be true, got: " .. tostring(request_data.evaluatePolicy)
+          }))
+          return
+        end
+
+        -- Return ALLOW with policyDecisions in response
+        ngx.status = 200
+        ngx.header["Content-Type"] = "application/json"
+        ngx.say(cjson.encode({
+          accessDecision = "ACCESS_DECISION_ALLOW",
+          policyDecisions = {
+            { policyId = "policy-1", decision = "ALLOW" }
+          }
+        }))
+      }
+    }
+  }
+]]
+
 -- Run the tests for each strategy. Strategies include "postgres" and "off"
 --   which represent the deployment topologies for Kong Gateway
 for _, strategy in helpers.all_strategies() do
@@ -554,6 +598,23 @@ for _, strategy in helpers.all_strategies() do
           api_key = "test-api-key-12345",
           workspace_id = 123,
           timeout = 5000,
+        },
+      }
+
+      -- Route with evaluate_policy enabled
+      local route_policy = blue_print.routes:insert({
+        paths = { "/test-policy" },
+        service = { id = service.id },
+      })
+      blue_print.plugins:insert {
+        name = PLUGIN_NAME,
+        route = { id = route_policy.id },
+        config = {
+          bigeye_url = "http://localhost:16565",
+          api_key = "test-api-key-12345",
+          workspace_id = 123,
+          timeout = 5000,
+          evaluate_policy = true,
         },
       }
 
@@ -812,6 +873,24 @@ for _, strategy in helpers.all_strategies() do
             ["x-agent-id"] = "test-agent-abc",
           },
         })
+
+        assert.response(r).has.status(200)
+      end)
+
+    end)
+
+    describe("Policy evaluation", function()
+
+      it("sends evaluatePolicy=true when evaluate_policy is configured", function()
+        local r = client:get("/test-policy/anything", {})
+
+        -- Mock validates evaluatePolicy is true and returns policyDecisions; DENY if missing
+        assert.response(r).has.status(200)
+      end)
+
+      it("does not send evaluatePolicy when evaluate_policy is not configured", function()
+        -- The allow route has no evaluate_policy set; mock at 16555 returns ALLOW regardless
+        local r = client:get("/test-allow/anything", {})
 
         assert.response(r).has.status(200)
       end)

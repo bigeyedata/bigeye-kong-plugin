@@ -70,6 +70,12 @@ local schema = {
             default = 0,
             description = "WarehouseType enum value for AccessObject.source_type (0=unspecified, 10=Snowflake, 2=BigQuery, etc.)"
           } },
+          { evaluate_policy = {
+            type = "boolean",
+            required = false,
+            default = false,
+            description = "When true, instructs Bigeye to evaluate the policy engine for the conversation in the request"
+          } },
         },
         entity_checks = {
           { mutually_required = { "username", "password" } },
