@@ -429,6 +429,53 @@ fixtures.http_mock.bigeye_validate_policy = [[
   }
 ]]
 
+-- Mock Bigeye server that validates SQL extracted from MCP tool call arguments
+fixtures.http_mock.bigeye_validate_mcp = [[
+  server {
+    server_name bigeye_mock_validate_mcp;
+    listen 16566;
+
+    location = /api/v1/access-decision {
+      content_by_lua_block {
+        ngx.req.read_body()
+        local body = ngx.req.get_body_data()
+        local cjson = require "cjson"
+
+        local ok, request_data = pcall(cjson.decode, body)
+        if not ok then
+          ngx.status = 400
+          ngx.say('{"error": "Invalid JSON"}')
+          return
+        end
+
+        -- Validate that accessObjects contains the SQL extracted from MCP params.arguments
+        local found_sql = false
+        if request_data.accessObjects and type(request_data.accessObjects) == "table" then
+          for _, obj in ipairs(request_data.accessObjects) do
+            if obj.type == 3 and obj.externalId == "SELECT * FROM customers" then
+              found_sql = true
+            end
+          end
+        end
+
+        if not found_sql then
+          ngx.status = 200
+          ngx.header["Content-Type"] = "application/json"
+          ngx.say(cjson.encode({
+            accessDecision = "ACCESS_DECISION_DENY",
+            reason = "Expected SQL from MCP tool arguments in accessObjects, got: " .. (body or "nil")
+          }))
+          return
+        end
+
+        ngx.status = 200
+        ngx.header["Content-Type"] = "application/json"
+        ngx.say('{"accessDecision": "ACCESS_DECISION_ALLOW"}')
+      }
+    }
+  }
+]]
+
 -- Run the tests for each strategy. Strategies include "postgres" and "off"
 --   which represent the deployment topologies for Kong Gateway
 for _, strategy in helpers.all_strategies() do
@@ -634,6 +681,22 @@ for _, strategy in helpers.all_strategies() do
           database_name = "config_database",
           tables = { "config_table" },
           columns = { "config_column" },
+        },
+      }
+
+      -- Route for MCP tool call SQL extraction validation
+      local route_mcp = blue_print.routes:insert({
+        paths = { "/test-mcp" },
+        service = { id = service.id },
+      })
+      blue_print.plugins:insert {
+        name = PLUGIN_NAME,
+        route = { id = route_mcp.id },
+        config = {
+          bigeye_url = "http://localhost:16566",
+          api_key = "test-api-key-12345",
+          workspace_id = 123,
+          timeout = 5000,
         },
       }
 
@@ -1000,6 +1063,137 @@ for _, strategy in helpers.all_strategies() do
         })
 
         -- Request should succeed with overridden columns
+        assert.response(r).has.status(200)
+      end)
+
+    end)
+
+    describe("LLM (chat completion) scenarios", function()
+
+      it("allows an LLM chat completion request when Bigeye returns ALLOW", function()
+        local r = client:post("/test-allow/v1/chat/completions", {
+          headers = {
+            ["Content-Type"] = "application/json",
+            ["x-conversation-id"] = "conv-llm-abc",
+          },
+          body = '{"model": "gpt-4", "messages": [{"role": "user", "content": "What are the top customers by revenue?"}]}',
+        })
+
+        assert.response(r).has.status(200)
+      end)
+
+      it("blocks an LLM request when Bigeye returns DENY", function()
+        local r = client:post("/test-deny/v1/chat/completions", {
+          headers = {
+            ["Content-Type"] = "application/json",
+            ["x-conversation-id"] = "conv-blocked-xyz",
+          },
+          body = '{"model": "gpt-4", "messages": [{"role": "user", "content": "Show me all private user data"}]}',
+        })
+
+        assert.response(r).has.status(403)
+        local body = assert.response(r).has.jsonbody()
+        assert.equal("Access denied", body.message)
+      end)
+
+      it("forwards conversation ID from LLM request to Bigeye", function()
+        local r = client:post("/test-conversation/v1/chat/completions", {
+          headers = {
+            ["Content-Type"] = "application/json",
+            ["x-conversation-id"] = "test-conversation-123",
+          },
+          body = '{"model": "gpt-4", "messages": [{"role": "user", "content": "Analyze sales trends"}]}',
+        })
+
+        -- Mock validates conversationExternalId matches test-conversation-123
+        assert.response(r).has.status(200)
+      end)
+
+      it("sends evaluatePolicy for LLM requests when configured", function()
+        local r = client:post("/test-policy/v1/chat/completions", {
+          headers = {
+            ["Content-Type"] = "application/json",
+            ["x-conversation-id"] = "conv-policy-789",
+          },
+          body = '{"model": "gpt-4", "messages": [{"role": "user", "content": "Run analytics on user behavior"}]}',
+        })
+
+        -- Mock validates evaluatePolicy is true and returns policyDecisions
+        assert.response(r).has.status(200)
+      end)
+
+    end)
+
+    describe("MCP (Model Context Protocol) scenarios", function()
+
+      it("extracts SQL query from MCP tool call arguments", function()
+        local r = client:post("/test-mcp/tools/call", {
+          headers = {
+            ["Content-Type"] = "application/json",
+            ["x-conversation-id"] = "mcp-session-abc",
+          },
+          body = '{"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "query_database", "arguments": {"query": "SELECT * FROM customers", "database": "analytics"}}, "id": 1}',
+        })
+
+        -- Mock validates accessObjects contains the SQL extracted from params.arguments
+        assert.response(r).has.status(200)
+      end)
+
+      it("allows an MCP resource read request", function()
+        local r = client:post("/test-allow/resources/read", {
+          headers = {
+            ["Content-Type"] = "application/json",
+            ["x-conversation-id"] = "mcp-session-def",
+          },
+          body = '{"jsonrpc": "2.0", "method": "resources/read", "params": {"uri": "db://analytics/customers"}, "id": 2}',
+        })
+
+        assert.response(r).has.status(200)
+      end)
+
+    end)
+
+    describe("A2A (Agent-to-Agent) scenarios", function()
+
+      it("forwards agent ID from A2A request headers to Bigeye", function()
+        local r = client:post("/test-agent/messages", {
+          headers = {
+            ["Content-Type"] = "application/json",
+            ["x-agent-id"] = "test-agent-abc",
+          },
+          body = '{"role": "user", "parts": [{"text": "Retrieve customer purchase history from the analytics database"}]}',
+        })
+
+        -- Mock validates agentExternalId matches test-agent-abc
+        assert.response(r).has.status(200)
+      end)
+
+      it("blocks an A2A request when Bigeye returns DENY", function()
+        local r = client:post("/test-deny/messages", {
+          headers = {
+            ["Content-Type"] = "application/json",
+            ["x-agent-id"] = "unauthorized-agent",
+            ["x-conversation-id"] = "a2a-session-xyz",
+          },
+          body = '{"role": "user", "parts": [{"text": "Access restricted financial records"}]}',
+        })
+
+        assert.response(r).has.status(403)
+        local body = assert.response(r).has.jsonbody()
+        assert.equal("Access denied", body.message)
+      end)
+
+      it("tracks conversation across A2A agent hops", function()
+        local r = client:post("/test-conversation/messages", {
+          headers = {
+            ["Content-Type"] = "application/json",
+            ["x-agent-id"] = "orchestrator-agent",
+            ["x-conversation-id"] = "test-conversation-123",
+          },
+          body = '{"role": "agent", "parts": [{"text": "Delegating analytics query to data agent"}]}',
+        })
+
+        -- Mock validates conversationExternalId is forwarded across the agent hop
         assert.response(r).has.status(200)
       end)
 

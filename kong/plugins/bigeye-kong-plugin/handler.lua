@@ -44,6 +44,12 @@ function BigeyeKongPluginHandler:access(conf)
     kong.log.warn("Failed to read request body: ", body_err)
   end
 
+  -- Pre-extract MCP JSON-RPC tool call arguments if present (params.arguments in tools/call format)
+  local mcp_args
+  if type(body) == "table" and type(body.params) == "table" and type(body.params.arguments) == "table" then
+    mcp_args = body.params.arguments
+  end
+
   -- Extract SQL query from query parameters, then body (body takes precedence)
   local sql
   if req_query.query then
@@ -60,6 +66,9 @@ function BigeyeKongPluginHandler:access(conf)
       sql = body.sql
     end
   end
+  if not sql and mcp_args then
+    sql = mcp_args.query or mcp_args.sql
+  end
 
   -- Extract database name: query param > header > body > config
   local database
@@ -73,6 +82,9 @@ function BigeyeKongPluginHandler:access(conf)
   end
   if not database and type(body) == "table" then
     database = body.database or body.db
+  end
+  if not database and mcp_args then
+    database = mcp_args.database or mcp_args.db
   end
   if not database and conf.database_name then
     database = conf.database_name
@@ -97,6 +109,13 @@ function BigeyeKongPluginHandler:access(conf)
       tables = parse_string_list(body.tables)
     end
   end
+  if not tables and mcp_args and mcp_args.tables then
+    if type(mcp_args.tables) == "table" then
+      tables = mcp_args.tables
+    elseif type(mcp_args.tables) == "string" then
+      tables = parse_string_list(mcp_args.tables)
+    end
+  end
   if not tables and conf.tables then
     tables = conf.tables
   end
@@ -118,6 +137,13 @@ function BigeyeKongPluginHandler:access(conf)
       columns = body.columns
     elseif type(body.columns) == "string" then
       columns = parse_string_list(body.columns)
+    end
+  end
+  if not columns and mcp_args and mcp_args.columns then
+    if type(mcp_args.columns) == "table" then
+      columns = mcp_args.columns
+    elseif type(mcp_args.columns) == "string" then
+      columns = parse_string_list(mcp_args.columns)
     end
   end
   if not columns and conf.columns then
