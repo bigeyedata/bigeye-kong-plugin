@@ -1234,7 +1234,7 @@ for _, strategy in helpers.all_strategies() do
     describe("LLM (chat completion) scenarios", function()
 
       it("allows an LLM chat completion request when Bigeye returns ALLOW", function()
-        local r = client:post("/test-allow/v1/chat/completions", {
+        local r = client:post("/test-allow/anything", {
           headers = {
             ["Content-Type"] = "application/json",
             ["x-conversation-id"] = "conv-llm-abc",
@@ -1246,7 +1246,7 @@ for _, strategy in helpers.all_strategies() do
       end)
 
       it("blocks an LLM request when Bigeye returns DENY", function()
-        local r = client:post("/test-deny/v1/chat/completions", {
+        local r = client:post("/test-deny/anything", {
           headers = {
             ["Content-Type"] = "application/json",
             ["x-conversation-id"] = "conv-blocked-xyz",
@@ -1260,7 +1260,7 @@ for _, strategy in helpers.all_strategies() do
       end)
 
       it("forwards conversation ID from LLM request to Bigeye", function()
-        local r = client:post("/test-conversation/v1/chat/completions", {
+        local r = client:post("/test-conversation/anything", {
           headers = {
             ["Content-Type"] = "application/json",
             ["x-conversation-id"] = "test-conversation-123",
@@ -1273,7 +1273,7 @@ for _, strategy in helpers.all_strategies() do
       end)
 
       it("sends evaluatePolicy for LLM requests when configured", function()
-        local r = client:post("/test-policy/v1/chat/completions", {
+        local r = client:post("/test-policy/anything", {
           headers = {
             ["Content-Type"] = "application/json",
             ["x-conversation-id"] = "conv-policy-789",
@@ -1290,7 +1290,7 @@ for _, strategy in helpers.all_strategies() do
     describe("MCP (Model Context Protocol) scenarios", function()
 
       it("extracts SQL query from MCP tool call arguments", function()
-        local r = client:post("/test-mcp/tools/call", {
+        local r = client:post("/test-mcp/anything", {
           headers = {
             ["Content-Type"] = "application/json",
             ["x-conversation-id"] = "mcp-session-abc",
@@ -1303,7 +1303,7 @@ for _, strategy in helpers.all_strategies() do
       end)
 
       it("allows an MCP resource read request", function()
-        local r = client:post("/test-allow/resources/read", {
+        local r = client:post("/test-allow/anything", {
           headers = {
             ["Content-Type"] = "application/json",
             ["x-conversation-id"] = "mcp-session-def",
@@ -1319,7 +1319,7 @@ for _, strategy in helpers.all_strategies() do
     describe("A2A (Agent-to-Agent) scenarios", function()
 
       it("forwards agent ID from A2A request headers to Bigeye", function()
-        local r = client:post("/test-agent/messages", {
+        local r = client:post("/test-agent/anything", {
           headers = {
             ["Content-Type"] = "application/json",
             ["x-agent-id"] = "test-agent-abc",
@@ -1332,7 +1332,7 @@ for _, strategy in helpers.all_strategies() do
       end)
 
       it("blocks an A2A request when Bigeye returns DENY", function()
-        local r = client:post("/test-deny/messages", {
+        local r = client:post("/test-deny/anything", {
           headers = {
             ["Content-Type"] = "application/json",
             ["x-agent-id"] = "unauthorized-agent",
@@ -1347,7 +1347,7 @@ for _, strategy in helpers.all_strategies() do
       end)
 
       it("tracks conversation across A2A agent hops", function()
-        local r = client:post("/test-conversation/messages", {
+        local r = client:post("/test-conversation/anything", {
           headers = {
             ["Content-Type"] = "application/json",
             ["x-agent-id"] = "orchestrator-agent",
@@ -1378,7 +1378,7 @@ for _, strategy in helpers.all_strategies() do
       end)
 
       it("extracts initialPrompt from first user message in LLM request body when header is absent", function()
-        local r = client:post("/test-initial-prompt/v1/chat/completions", {
+        local r = client:post("/test-initial-prompt/anything", {
           headers = {
             ["Content-Type"] = "application/json",
           },
