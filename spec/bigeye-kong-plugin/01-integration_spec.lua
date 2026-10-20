@@ -476,6 +476,121 @@ fixtures.http_mock.bigeye_validate_mcp = [[
   }
 ]]
 
+-- Mock Bigeye server that validates initialPrompt is forwarded
+fixtures.http_mock.bigeye_validate_initial_prompt = [[
+  server {
+    server_name bigeye_mock_validate_initial_prompt;
+    listen 16567;
+
+    location = /api/v1/access-decision {
+      content_by_lua_block {
+        ngx.req.read_body()
+        local body = ngx.req.get_body_data()
+        local cjson = require "cjson"
+
+        local ok, request_data = pcall(cjson.decode, body)
+        if not ok then
+          ngx.status = 400
+          ngx.say('{"error": "Invalid JSON"}')
+          return
+        end
+
+        -- Validate that initialPrompt is present and matches expected value
+        if request_data.initialPrompt ~= "What are the top customers by revenue?" then
+          ngx.status = 200
+          ngx.header["Content-Type"] = "application/json"
+          ngx.say(cjson.encode({
+            accessDecision = "ACCESS_DECISION_DENY",
+            reason = "Expected initialPrompt to be 'What are the top customers by revenue?', got: " .. tostring(request_data.initialPrompt)
+          }))
+          return
+        end
+
+        ngx.status = 200
+        ngx.header["Content-Type"] = "application/json"
+        ngx.say('{"accessDecision": "ACCESS_DECISION_ALLOW"}')
+      }
+    }
+  }
+]]
+
+-- Mock Bigeye server that validates username is forwarded
+fixtures.http_mock.bigeye_validate_username = [[
+  server {
+    server_name bigeye_mock_validate_username;
+    listen 16568;
+
+    location = /api/v1/access-decision {
+      content_by_lua_block {
+        ngx.req.read_body()
+        local body = ngx.req.get_body_data()
+        local cjson = require "cjson"
+
+        local ok, request_data = pcall(cjson.decode, body)
+        if not ok then
+          ngx.status = 400
+          ngx.say('{"error": "Invalid JSON"}')
+          return
+        end
+
+        -- Validate that username is present and matches expected value
+        if request_data.username ~= "test-user@example.com" then
+          ngx.status = 200
+          ngx.header["Content-Type"] = "application/json"
+          ngx.say(cjson.encode({
+            accessDecision = "ACCESS_DECISION_DENY",
+            reason = "Expected username to be 'test-user@example.com', got: " .. tostring(request_data.username)
+          }))
+          return
+        end
+
+        ngx.status = 200
+        ngx.header["Content-Type"] = "application/json"
+        ngx.say('{"accessDecision": "ACCESS_DECISION_ALLOW"}')
+      }
+    }
+  }
+]]
+
+-- Mock Bigeye server that validates aiAgent.description is forwarded
+fixtures.http_mock.bigeye_validate_agent_description = [[
+  server {
+    server_name bigeye_mock_validate_agent_description;
+    listen 16569;
+
+    location = /api/v1/access-decision {
+      content_by_lua_block {
+        ngx.req.read_body()
+        local body = ngx.req.get_body_data()
+        local cjson = require "cjson"
+
+        local ok, request_data = pcall(cjson.decode, body)
+        if not ok then
+          ngx.status = 400
+          ngx.say('{"error": "Invalid JSON"}')
+          return
+        end
+
+        -- Validate that aiAgent.description is present and matches expected value
+        if not request_data.aiAgent or request_data.aiAgent.description ~= "Data retrieval agent" then
+          ngx.status = 200
+          ngx.header["Content-Type"] = "application/json"
+          local got = (request_data.aiAgent and tostring(request_data.aiAgent.description)) or "nil"
+          ngx.say(cjson.encode({
+            accessDecision = "ACCESS_DECISION_DENY",
+            reason = "Expected aiAgent.description to be 'Data retrieval agent', got: " .. got
+          }))
+          return
+        end
+
+        ngx.status = 200
+        ngx.header["Content-Type"] = "application/json"
+        ngx.say('{"accessDecision": "ACCESS_DECISION_ALLOW"}')
+      }
+    }
+  }
+]]
+
 -- Run the tests for each strategy. Strategies include "postgres" and "off"
 --   which represent the deployment topologies for Kong Gateway
 for _, strategy in helpers.all_strategies() do
@@ -694,6 +809,54 @@ for _, strategy in helpers.all_strategies() do
         route = { id = route_mcp.id },
         config = {
           bigeye_url = "http://localhost:16566",
+          api_key = "test-api-key-12345",
+          workspace_id = 123,
+          timeout = 5000,
+        },
+      }
+
+      -- Route for initialPrompt validation
+      local route_initial_prompt = blue_print.routes:insert({
+        paths = { "/test-initial-prompt" },
+        service = { id = service.id },
+      })
+      blue_print.plugins:insert {
+        name = PLUGIN_NAME,
+        route = { id = route_initial_prompt.id },
+        config = {
+          bigeye_url = "http://localhost:16567",
+          api_key = "test-api-key-12345",
+          workspace_id = 123,
+          timeout = 5000,
+        },
+      }
+
+      -- Route for username validation
+      local route_username = blue_print.routes:insert({
+        paths = { "/test-username" },
+        service = { id = service.id },
+      })
+      blue_print.plugins:insert {
+        name = PLUGIN_NAME,
+        route = { id = route_username.id },
+        config = {
+          bigeye_url = "http://localhost:16568",
+          api_key = "test-api-key-12345",
+          workspace_id = 123,
+          timeout = 5000,
+        },
+      }
+
+      -- Route for aiAgent.description validation
+      local route_agent_description = blue_print.routes:insert({
+        paths = { "/test-agent-description" },
+        service = { id = service.id },
+      })
+      blue_print.plugins:insert {
+        name = PLUGIN_NAME,
+        route = { id = route_agent_description.id },
+        config = {
+          bigeye_url = "http://localhost:16569",
           api_key = "test-api-key-12345",
           workspace_id = 123,
           timeout = 5000,
@@ -1194,6 +1357,62 @@ for _, strategy in helpers.all_strategies() do
         })
 
         -- Mock validates conversationExternalId is forwarded across the agent hop
+        assert.response(r).has.status(200)
+      end)
+
+    end)
+
+    describe("New access-decision contract fields", function()
+
+      it("forwards x-initial-prompt header as initialPrompt", function()
+        local r = client:post("/test-initial-prompt/anything", {
+          headers = {
+            ["Content-Type"] = "application/json",
+            ["x-initial-prompt"] = "What are the top customers by revenue?",
+          },
+          body = '{}',
+        })
+
+        -- Mock validates initialPrompt matches the header value
+        assert.response(r).has.status(200)
+      end)
+
+      it("extracts initialPrompt from first user message in LLM request body when header is absent", function()
+        local r = client:post("/test-initial-prompt/v1/chat/completions", {
+          headers = {
+            ["Content-Type"] = "application/json",
+          },
+          body = '{"model": "gpt-4", "messages": [{"role": "system", "content": "You are a helpful assistant."}, {"role": "user", "content": "What are the top customers by revenue?"}]}',
+        })
+
+        -- Mock validates initialPrompt is extracted from the first user message
+        assert.response(r).has.status(200)
+      end)
+
+      it("forwards x-username header as username", function()
+        local r = client:post("/test-username/anything", {
+          headers = {
+            ["Content-Type"] = "application/json",
+            ["x-username"] = "test-user@example.com",
+          },
+          body = '{}',
+        })
+
+        -- Mock validates username matches the header value
+        assert.response(r).has.status(200)
+      end)
+
+      it("includes description in aiAgent when x-ai-agent-description is set", function()
+        local r = client:post("/test-agent-description/anything", {
+          headers = {
+            ["Content-Type"] = "application/json",
+            ["x-ai-agent-id"] = "agent-xyz",
+            ["x-ai-agent-description"] = "Data retrieval agent",
+          },
+          body = '{}',
+        })
+
+        -- Mock validates aiAgent.description matches the header value
         assert.response(r).has.status(200)
       end)
 

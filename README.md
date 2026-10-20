@@ -44,6 +44,9 @@ The plugin extracts context from the request before sending it to Bigeye. Reques
 | Conversation ID | — | `x-conversation-id` or `x-session-id` | — | — |
 | Agent ID | — | `x-agent-id` | — | — |
 | AI agent ID | — | `x-ai-agent-id` | — | — |
+| AI agent description | — | `x-ai-agent-description` | — | — |
+| Initial prompt | — | `x-initial-prompt` | — | — |
+| Username | — | `x-username` | — | — |
 
 Tables and columns in query params and headers can be provided as a JSON array or a comma-separated string. `x-conversation-id` takes precedence over `x-session-id` when both are present.
 

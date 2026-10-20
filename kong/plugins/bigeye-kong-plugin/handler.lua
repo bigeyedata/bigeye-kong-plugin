@@ -180,9 +180,30 @@ function BigeyeKongPluginHandler:access(conf)
     end
   end
 
-  -- Build aiAgent from x-ai-agent-id header if present
+  -- Build aiAgent from x-ai-agent-id and x-ai-agent-description headers if present
   local ai_agent_external_id = req_headers["x-ai-agent-id"]
-  local ai_agent = ai_agent_external_id and { externalId = ai_agent_external_id } or nil
+  local ai_agent_description = req_headers["x-ai-agent-description"]
+  local ai_agent = nil
+  if ai_agent_external_id then
+    ai_agent = { externalId = ai_agent_external_id }
+    if ai_agent_description then
+      ai_agent.description = ai_agent_description
+    end
+  end
+
+  -- Extract initialPrompt: x-initial-prompt header takes precedence; fall back to first user message in body
+  local initial_prompt = req_headers["x-initial-prompt"]
+  if not initial_prompt and type(body) == "table" and type(body.messages) == "table" then
+    for _, msg in ipairs(body.messages) do
+      if msg.role == "user" and type(msg.content) == "string" then
+        initial_prompt = msg.content
+        break
+      end
+    end
+  end
+
+  -- Extract username from x-username header
+  local username = req_headers["x-username"]
 
   -- Proto3 JSON uses camelCase field names
   local request_data = {
@@ -198,6 +219,8 @@ function BigeyeKongPluginHandler:access(conf)
     conversationExternalId = kong.request.get_header("x-conversation-id") or kong.request.get_header("x-session-id"),
     -- only include evaluatePolicy when explicitly enabled to avoid sending proto3 default
     evaluatePolicy = conf.evaluate_policy or nil,
+    initialPrompt = initial_prompt or nil,
+    username = username or nil,
   }
 
   -- Send to Bigeye synchronously (we need to block on the response)
