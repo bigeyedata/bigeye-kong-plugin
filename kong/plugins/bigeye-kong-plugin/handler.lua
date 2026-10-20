@@ -170,11 +170,14 @@ function BigeyeKongPluginHandler:access(conf)
     agentExternalId = kong.request.get_header("x-agent-id"),
     -- x-conversation-id takes precedence over x-session-id
     conversationExternalId = kong.request.get_header("x-conversation-id") or kong.request.get_header("x-session-id"),
+    -- only include evaluatePolicy when explicitly enabled to avoid sending proto3 default
+    evaluatePolicy = conf.evaluate_policy or nil,
   }
 
   -- Send to Bigeye synchronously (we need to block on the response)
   local httpc = http.new()
-  httpc:set_timeout(conf.timeout)
+  local timeout = (conf.evaluate_policy and conf.evaluate_policy_timeout) or conf.timeout
+  httpc:set_timeout(timeout)
 
   -- Prepare headers
   local bigeye_headers = {
@@ -249,7 +252,13 @@ function BigeyeKongPluginHandler:access(conf)
 
   -- Check if access is denied
   kong.log.debug("Response from Bigeye - response_data: ", cjson.encode(response_data))
-  if response_data.accessDecision == "ACCESS_DECISION_DENY" then
+  if response_data.policyDecisions then
+    kong.log.debug("Bigeye policy decisions: ", cjson.encode(response_data.policyDecisions))
+  end
+  -- overall_decision is the authoritative field when policy evaluation is enabled;
+  -- fall back to accessDecision for responses that predate policy evaluation
+  local decision = response_data.overallDecision or response_data.accessDecision
+  if decision == "ACCESS_DECISION_DENY" then
     local reason = response_data.reason or "Access denied by Bigeye"
     kong.log.warn("Blocking request - Bigeye decision: DENY - Reason: ", reason)
     return kong.response.exit(403, {
