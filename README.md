@@ -207,17 +207,14 @@ The plugin schema satisfies all Kong AI Custom Policy validation rules:
 #### Installed mode — Konnect API
 
 ```bash
-export LUA_SCHEMA=$(cat kong/plugins/bigeye-kong-plugin/schema.lua | tr -d '\n')
+export LUA_SCHEMA=$(cat kong/plugins/bigeye-kong-plugin/schema.lua)
 
 curl -X POST "https://{region}.api.konghq.com/v1/ai-gateways/{AIGatewayId}/custom-policies" \
   --header "Authorization: Bearer $KONNECT_TOKEN" \
   --header "Content-Type: application/json" \
-  --data '{
-    "name": "bigeye-kong-plugin",
-    "type": "installed",
-    "display_name": "Bigeye Kong Plugin",
-    "schema": "'"$LUA_SCHEMA"'"
-  }'
+  --data "$(jq -n \
+    --arg schema "$LUA_SCHEMA" \
+    '{name: "bigeye-kong-plugin", type: "installed", display_name: "Bigeye Kong Plugin", schema: $schema}')"
 ```
 
 #### Installed mode — kongctl

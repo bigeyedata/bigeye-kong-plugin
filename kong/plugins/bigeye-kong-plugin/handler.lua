@@ -200,13 +200,13 @@ function BigeyeKongPluginHandler:access(conf)
   local initial_prompt = kong.request.get_header("x-initial-prompt")
   if not initial_prompt and type(body) == "table" and type(body.messages) == "table" then
     for _, msg in ipairs(body.messages) do
-      if msg.role == "user" then
+      if type(msg) == "table" and msg.role == "user" then
         if type(msg.content) == "string" then
           initial_prompt = msg.content
         elseif type(msg.content) == "table" then
           -- Multi-modal content: extract text from the first text part
           for _, part in ipairs(msg.content) do
-            if part.type == "text" and type(part.text) == "string" then
+            if type(part) == "table" and part.type == "text" and type(part.text) == "string" then
               initial_prompt = part.text
               break
             end
@@ -264,7 +264,7 @@ function BigeyeKongPluginHandler:access(conf)
   end
 
   kong.log.debug("Request to Bigeye - URL: ", conf.bigeye_url .. "/api/v1/access-decision")
-  -- Redact Authorization header for security
+  -- Redact Authorization header and PII fields for security
   local safe_headers = {}
   for k, v in pairs(bigeye_headers) do
     if k == "Authorization" then
@@ -274,7 +274,15 @@ function BigeyeKongPluginHandler:access(conf)
     end
   end
   kong.log.debug("Request to Bigeye - Headers: ", cjson.encode(safe_headers))
-  kong.log.debug("Request to Bigeye - Body: ", request_body)
+  local safe_body = {}
+  for k, v in pairs(request_data) do
+    if k == "username" or k == "initialPrompt" then
+      safe_body[k] = "[REDACTED]"
+    else
+      safe_body[k] = v
+    end
+  end
+  kong.log.debug("Request to Bigeye - Body: ", cjson.encode(safe_body))
 
   -- Send the request
   local res, request_err = httpc:request_uri(conf.bigeye_url .. "/api/v1/access-decision", {
