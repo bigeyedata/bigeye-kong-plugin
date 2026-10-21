@@ -1,0 +1,19 @@
+# Register bigeye-kong-plugin as an installed AI Custom Policy.
+#
+# Prerequisites:
+#   1. Install the plugin on each data plane first:
+#      https://developer.konghq.com/custom-plugins/installation-and-distribution/
+#   2. Set the required environment variables below.
+#
+# Usage:
+#   export AI_GATEWAY_ID=<your-ai-gateway-id>
+#   export BIGEYE_KONG_PLUGIN_SCHEMA=$(cat ../kong/plugins/bigeye-kong-plugin/schema.lua)
+#   kongctl apply -f ai-custom-policy-installed.yaml
+
+ai_gateway_custom_policies:
+  - ref: bigeye-kong-plugin
+    ai_gateway: !lookup {id: !env AI_GATEWAY_ID}
+    name: bigeye-kong-plugin
+    type: installed
+    display_name: Bigeye Kong Plugin
+    schema: !env BIGEYE_KONG_PLUGIN_SCHEMA

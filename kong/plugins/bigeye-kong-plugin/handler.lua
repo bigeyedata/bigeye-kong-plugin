@@ -44,6 +44,13 @@ function BigeyeKongPluginHandler:access(conf)
     kong.log.warn("Failed to read request body: ", body_err)
   end
 
+  -- Pre-extract MCP JSON-RPC tool call arguments (only for tools/call method to avoid false matches)
+  local mcp_args
+  if type(body) == "table" and body.method == "tools/call"
+      and type(body.params) == "table" and type(body.params.arguments) == "table" then
+    mcp_args = body.params.arguments
+  end
+
   -- Extract SQL query from query parameters, then body (body takes precedence)
   local sql
   if req_query.query then
@@ -60,6 +67,9 @@ function BigeyeKongPluginHandler:access(conf)
       sql = body.sql
     end
   end
+  if not sql and mcp_args then
+    sql = mcp_args.query or mcp_args.sql
+  end
 
   -- Extract database name: query param > header > body > config
   local database
@@ -73,6 +83,9 @@ function BigeyeKongPluginHandler:access(conf)
   end
   if not database and type(body) == "table" then
     database = body.database or body.db
+  end
+  if not database and mcp_args then
+    database = mcp_args.database or mcp_args.db
   end
   if not database and conf.database_name then
     database = conf.database_name
@@ -97,6 +110,13 @@ function BigeyeKongPluginHandler:access(conf)
       tables = parse_string_list(body.tables)
     end
   end
+  if not tables and mcp_args and mcp_args.tables then
+    if type(mcp_args.tables) == "table" then
+      tables = mcp_args.tables
+    elseif type(mcp_args.tables) == "string" then
+      tables = parse_string_list(mcp_args.tables)
+    end
+  end
   if not tables and conf.tables then
     tables = conf.tables
   end
@@ -118,6 +138,13 @@ function BigeyeKongPluginHandler:access(conf)
       columns = body.columns
     elseif type(body.columns) == "string" then
       columns = parse_string_list(body.columns)
+    end
+  end
+  if not columns and mcp_args and mcp_args.columns then
+    if type(mcp_args.columns) == "table" then
+      columns = mcp_args.columns
+    elseif type(mcp_args.columns) == "string" then
+      columns = parse_string_list(mcp_args.columns)
     end
   end
   if not columns and conf.columns then
@@ -154,9 +181,44 @@ function BigeyeKongPluginHandler:access(conf)
     end
   end
 
-  -- Build aiAgent from x-ai-agent-id header if present
-  local ai_agent_external_id = req_headers["x-ai-agent-id"]
-  local ai_agent = ai_agent_external_id and { externalId = ai_agent_external_id } or nil
+  -- Build aiAgent from x-ai-agent-id and x-ai-agent-description headers if present.
+  -- get_header() guarantees a single string even when the header is repeated.
+  local ai_agent_external_id = kong.request.get_header("x-ai-agent-id")
+  local ai_agent_description = kong.request.get_header("x-ai-agent-description")
+  local ai_agent = nil
+  if ai_agent_external_id then
+    ai_agent = { externalId = ai_agent_external_id }
+    if ai_agent_description then
+      ai_agent.description = ai_agent_description
+    end
+  elseif ai_agent_description then
+    kong.log.warn("x-ai-agent-description set without x-ai-agent-id; description will not be sent to Bigeye")
+  end
+
+  -- Extract initialPrompt: x-initial-prompt header takes precedence; fall back to first user message in body.
+  -- Handles both string content and multi-modal array content (OpenAI format).
+  local initial_prompt = kong.request.get_header("x-initial-prompt")
+  if not initial_prompt and type(body) == "table" and type(body.messages) == "table" then
+    for _, msg in ipairs(body.messages) do
+      if type(msg) == "table" and msg.role == "user" then
+        if type(msg.content) == "string" then
+          initial_prompt = msg.content
+        elseif type(msg.content) == "table" then
+          -- Multi-modal content: extract text from the first text part
+          for _, part in ipairs(msg.content) do
+            if type(part) == "table" and part.type == "text" and type(part.text) == "string" then
+              initial_prompt = part.text
+              break
+            end
+          end
+        end
+        break
+      end
+    end
+  end
+
+  -- Extract username from x-username header
+  local username = kong.request.get_header("x-username")
 
   -- Proto3 JSON uses camelCase field names
   local request_data = {
@@ -172,6 +234,8 @@ function BigeyeKongPluginHandler:access(conf)
     conversationExternalId = kong.request.get_header("x-conversation-id") or kong.request.get_header("x-session-id"),
     -- only include evaluatePolicy when explicitly enabled to avoid sending proto3 default
     evaluatePolicy = conf.evaluate_policy or nil,
+    initialPrompt = initial_prompt or nil,
+    username = username or nil,
   }
 
   -- Send to Bigeye synchronously (we need to block on the response)
@@ -200,7 +264,7 @@ function BigeyeKongPluginHandler:access(conf)
   end
 
   kong.log.debug("Request to Bigeye - URL: ", conf.bigeye_url .. "/api/v1/access-decision")
-  -- Redact Authorization header for security
+  -- Redact Authorization header and PII fields for security
   local safe_headers = {}
   for k, v in pairs(bigeye_headers) do
     if k == "Authorization" then
@@ -210,7 +274,15 @@ function BigeyeKongPluginHandler:access(conf)
     end
   end
   kong.log.debug("Request to Bigeye - Headers: ", cjson.encode(safe_headers))
-  kong.log.debug("Request to Bigeye - Body: ", request_body)
+  local safe_body = {}
+  for k, v in pairs(request_data) do
+    if k == "username" or k == "initialPrompt" then
+      safe_body[k] = "[REDACTED]"
+    else
+      safe_body[k] = v
+    end
+  end
+  kong.log.debug("Request to Bigeye - Body: ", cjson.encode(safe_body))
 
   -- Send the request
   local res, request_err = httpc:request_uri(conf.bigeye_url .. "/api/v1/access-decision", {

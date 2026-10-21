@@ -1,0 +1,26 @@
+# Attach bigeye-kong-plugin as a global AI Gateway policy.
+#
+# Run this after registering the AI Custom Policy (see ai-custom-policy-*.yaml).
+# The policy applies to all AI traffic through the gateway when global: true.
+#
+# Usage:
+#   export AI_GATEWAY_ID=<your-ai-gateway-id>
+#   export BIGEYE_URL=https://bigeye.example.com
+#   export BIGEYE_API_KEY=<your-bigeye-api-key>
+#   export BIGEYE_WORKSPACE_ID=<your-workspace-id>
+#   kongctl apply -f ai-gateway-policy.yaml
+
+ai_gateway_policies:
+  - ref: bigeye-access-policy
+    ai_gateway: !lookup {id: !env AI_GATEWAY_ID}
+    display_name: Bigeye Access Policy
+    name: bigeye-access-policy
+    type: bigeye-kong-plugin
+    enabled: true
+    global: true
+    config:
+      bigeye_url: !env BIGEYE_URL
+      api_key: !env BIGEYE_API_KEY
+      workspace_id: !env BIGEYE_WORKSPACE_ID
+      evaluate_policy: true
+      evaluate_policy_timeout: 15000
