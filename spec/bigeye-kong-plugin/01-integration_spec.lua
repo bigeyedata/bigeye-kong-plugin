@@ -1389,6 +1389,18 @@ for _, strategy in helpers.all_strategies() do
         assert.response(r).has.status(200)
       end)
 
+      it("extracts initialPrompt from multi-modal array-content user message", function()
+        local r = client:post("/test-initial-prompt/anything", {
+          headers = {
+            ["Content-Type"] = "application/json",
+          },
+          body = '{"model": "gpt-4", "messages": [{"role": "user", "content": [{"type": "text", "text": "What are the top customers by revenue?"}, {"type": "image_url", "image_url": {"url": "https://example.com/chart.png"}}]}]}',
+        })
+
+        -- Mock validates initialPrompt is extracted from the text part of the array-content message
+        assert.response(r).has.status(200)
+      end)
+
       it("forwards x-username header as username", function()
         local r = client:post("/test-username/anything", {
           headers = {

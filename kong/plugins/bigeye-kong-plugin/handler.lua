@@ -44,9 +44,10 @@ function BigeyeKongPluginHandler:access(conf)
     kong.log.warn("Failed to read request body: ", body_err)
   end
 
-  -- Pre-extract MCP JSON-RPC tool call arguments if present (params.arguments in tools/call format)
+  -- Pre-extract MCP JSON-RPC tool call arguments (only for tools/call method to avoid false matches)
   local mcp_args
-  if type(body) == "table" and type(body.params) == "table" and type(body.params.arguments) == "table" then
+  if type(body) == "table" and body.method == "tools/call"
+      and type(body.params) == "table" and type(body.params.arguments) == "table" then
     mcp_args = body.params.arguments
   end
 
@@ -180,30 +181,44 @@ function BigeyeKongPluginHandler:access(conf)
     end
   end
 
-  -- Build aiAgent from x-ai-agent-id and x-ai-agent-description headers if present
-  local ai_agent_external_id = req_headers["x-ai-agent-id"]
-  local ai_agent_description = req_headers["x-ai-agent-description"]
+  -- Build aiAgent from x-ai-agent-id and x-ai-agent-description headers if present.
+  -- get_header() guarantees a single string even when the header is repeated.
+  local ai_agent_external_id = kong.request.get_header("x-ai-agent-id")
+  local ai_agent_description = kong.request.get_header("x-ai-agent-description")
   local ai_agent = nil
   if ai_agent_external_id then
     ai_agent = { externalId = ai_agent_external_id }
     if ai_agent_description then
       ai_agent.description = ai_agent_description
     end
+  elseif ai_agent_description then
+    kong.log.warn("x-ai-agent-description set without x-ai-agent-id; description will not be sent to Bigeye")
   end
 
-  -- Extract initialPrompt: x-initial-prompt header takes precedence; fall back to first user message in body
-  local initial_prompt = req_headers["x-initial-prompt"]
+  -- Extract initialPrompt: x-initial-prompt header takes precedence; fall back to first user message in body.
+  -- Handles both string content and multi-modal array content (OpenAI format).
+  local initial_prompt = kong.request.get_header("x-initial-prompt")
   if not initial_prompt and type(body) == "table" and type(body.messages) == "table" then
     for _, msg in ipairs(body.messages) do
-      if msg.role == "user" and type(msg.content) == "string" then
-        initial_prompt = msg.content
+      if msg.role == "user" then
+        if type(msg.content) == "string" then
+          initial_prompt = msg.content
+        elseif type(msg.content) == "table" then
+          -- Multi-modal content: extract text from the first text part
+          for _, part in ipairs(msg.content) do
+            if part.type == "text" and type(part.text) == "string" then
+              initial_prompt = part.text
+              break
+            end
+          end
+        end
         break
       end
     end
   end
 
   -- Extract username from x-username header
-  local username = req_headers["x-username"]
+  local username = kong.request.get_header("x-username")
 
   -- Proto3 JSON uses camelCase field names
   local request_data = {
