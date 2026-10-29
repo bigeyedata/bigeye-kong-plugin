@@ -327,12 +327,15 @@ function BigeyeKongPluginHandler:access(conf)
 
   -- Check if access is denied
   kong.log.debug("Response from Bigeye - response_data: ", cjson.encode(response_data))
-  if response_data.policyDecisions then
-    kong.log.debug("Bigeye policy decisions: ", cjson.encode(response_data.policyDecisions))
+  local policy_decisions = response_data.policyDecisions or response_data.policy_decisions
+  if policy_decisions then
+    kong.log.debug("Bigeye policy decisions: ", cjson.encode(policy_decisions))
   end
+  -- Accept both camelCase (proto3 JSON) and snake_case field names.
   -- overall_decision is the authoritative field when policy evaluation is enabled;
-  -- fall back to accessDecision for responses that predate policy evaluation
-  local decision = response_data.overallDecision or response_data.accessDecision
+  -- fall back to accessDecision for responses that predate policy evaluation.
+  local decision = response_data.overallDecision or response_data.overall_decision
+                   or response_data.accessDecision or response_data.access_decision
   if decision == "ACCESS_DECISION_DENY" then
     local reason = response_data.reason or "Access denied by Bigeye"
     kong.log.warn("Blocking request - Bigeye decision: DENY - Reason: ", reason)

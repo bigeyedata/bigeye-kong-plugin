@@ -429,6 +429,36 @@ fixtures.http_mock.bigeye_validate_policy = [[
   }
 ]]
 
+-- Mock Bigeye server that returns overall_decision (snake_case) DENY with policy_decisions
+-- Simulates the actual Bigeye API JSON response shape observed in production
+fixtures.http_mock.bigeye_overall_decision_deny = [[
+  server {
+    server_name bigeye_mock_overall_decision_deny;
+    listen 16571;
+
+    location = /api/v1/access-decision {
+      content_by_lua_block {
+        ngx.req.read_body()
+        local cjson = require "cjson"
+
+        ngx.status = 200
+        ngx.header["Content-Type"] = "application/json"
+        ngx.say(cjson.encode({
+          overall_decision = "ACCESS_DECISION_DENY",
+          policy_decisions = {
+            {
+              policy_id = 14,
+              policy_name = "Open issues",
+              matched = true,
+              issue_id = 280,
+            }
+          }
+        }))
+      }
+    }
+  }
+]]
+
 -- Mock Bigeye server that validates SQL extracted from MCP tool call arguments
 fixtures.http_mock.bigeye_validate_mcp = [[
   server {
@@ -986,6 +1016,23 @@ for _, strategy in helpers.all_strategies() do
         },
       }
 
+      -- Route for snake_case overall_decision DENY (production Bigeye response shape)
+      local route_overall_decision_deny = blue_print.routes:insert({
+        paths = { "/test-overall-decision-deny" },
+        service = { id = service.id },
+      })
+      blue_print.plugins:insert {
+        name = PLUGIN_NAME,
+        route = { id = route_overall_decision_deny.id },
+        config = {
+          bigeye_url = "http://localhost:16571",
+          api_key = "test-api-key-12345",
+          workspace_id = 123,
+          timeout = 5000,
+          evaluate_policy = true,
+        },
+      }
+
       -- start kong with fixtures
       assert(helpers.start_kong({
         -- use the custom test template to create a local mock server
@@ -1263,6 +1310,15 @@ for _, strategy in helpers.all_strategies() do
         local r = client:get("/test-allow/anything", {})
 
         assert.response(r).has.status(200)
+      end)
+
+      it("blocks request when Bigeye returns overall_decision (snake_case) DENY with policy_decisions", function()
+        local r = client:get("/test-overall-decision-deny/anything", {})
+
+        -- Mock returns the production Bigeye response shape: snake_case overall_decision + policy_decisions
+        assert.response(r).has.status(403)
+        local body = assert.response(r).has.jsonbody()
+        assert.equal("Access denied", body.message)
       end)
 
     end)
