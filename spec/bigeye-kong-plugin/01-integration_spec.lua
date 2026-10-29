@@ -591,6 +591,108 @@ fixtures.http_mock.bigeye_validate_agent_description = [[
   }
 ]]
 
+-- Mock Bigeye server that validates the exact request shape from the demo curl example
+fixtures.http_mock.bigeye_validate_demo = [[
+  server {
+    server_name bigeye_mock_validate_demo;
+    listen 16570;
+
+    location = /api/v1/access-decision {
+      content_by_lua_block {
+        ngx.req.read_body()
+        local body = ngx.req.get_body_data()
+        local cjson = require "cjson"
+
+        local ok, request_data = pcall(cjson.decode, body)
+        if not ok then
+          ngx.status = 400
+          ngx.say('{"error": "Invalid JSON"}')
+          return
+        end
+
+        local errors = {}
+
+        if request_data.operation ~= "POST" then
+          table.insert(errors, "expected operation=POST, got: " .. tostring(request_data.operation))
+        end
+
+        if request_data.path ~= "/query" then
+          table.insert(errors, "expected path=/query, got: " .. tostring(request_data.path))
+        end
+
+        if request_data.workspace ~= 2 then
+          table.insert(errors, "expected workspace=2, got: " .. tostring(request_data.workspace))
+        end
+
+        if request_data.evaluatePolicy ~= true then
+          table.insert(errors, "expected evaluatePolicy=true, got: " .. tostring(request_data.evaluatePolicy))
+        end
+
+        if request_data.agentExternalId ~= "kong-test-agent-001" then
+          table.insert(errors, "expected agentExternalId=kong-test-agent-001, got: " .. tostring(request_data.agentExternalId))
+        end
+
+        if request_data.conversationExternalId ~= "kong-test-conversation-001" then
+          table.insert(errors, "expected conversationExternalId=kong-test-conversation-001, got: " .. tostring(request_data.conversationExternalId))
+        end
+
+        if request_data.initialPrompt ~= "This is a test of the Kong plugin" then
+          table.insert(errors, "expected initialPrompt='This is a test of the Kong plugin', got: " .. tostring(request_data.initialPrompt))
+        end
+
+        if request_data.username ~= "alice@example.com" then
+          table.insert(errors, "expected username=alice@example.com, got: " .. tostring(request_data.username))
+        end
+
+        -- Validate accessObjects: exactly one SQL entry
+        if not request_data.accessObjects or type(request_data.accessObjects) ~= "table" or #request_data.accessObjects ~= 1 then
+          table.insert(errors, "expected exactly 1 accessObject, got: " .. tostring(request_data.accessObjects and #request_data.accessObjects or "nil"))
+        else
+          local obj = request_data.accessObjects[1]
+          if obj.type ~= 3 then
+            table.insert(errors, "expected accessObjects[0].type=3 (SQL), got: " .. tostring(obj.type))
+          end
+          if obj.sourceType ~= 0 then
+            table.insert(errors, "expected accessObjects[0].sourceType=0 (UNSPECIFIED), got: " .. tostring(obj.sourceType))
+          end
+          if obj.sourceName ~= "local" then
+            table.insert(errors, "expected accessObjects[0].sourceName=local, got: " .. tostring(obj.sourceName))
+          end
+          if obj.externalId ~= "SELECT * FROM kong_test" then
+            table.insert(errors, "expected accessObjects[0].externalId='SELECT * FROM kong_test', got: " .. tostring(obj.externalId))
+          end
+        end
+
+        -- Validate aiAgent nested object (populated from x-ai-agent-id / x-ai-agent-description)
+        if not request_data.aiAgent then
+          table.insert(errors, "expected aiAgent to be present")
+        else
+          if request_data.aiAgent.externalId ~= "kong-test-agent-001" then
+            table.insert(errors, "expected aiAgent.externalId=kong-test-agent-001, got: " .. tostring(request_data.aiAgent.externalId))
+          end
+          if request_data.aiAgent.description ~= "Test agent for Kong plugin" then
+            table.insert(errors, "expected aiAgent.description='Test agent for Kong plugin', got: " .. tostring(request_data.aiAgent.description))
+          end
+        end
+
+        if #errors > 0 then
+          ngx.status = 200
+          ngx.header["Content-Type"] = "application/json"
+          ngx.say(cjson.encode({
+            accessDecision = "ACCESS_DECISION_DENY",
+            reason = table.concat(errors, "; ")
+          }))
+          return
+        end
+
+        ngx.status = 200
+        ngx.header["Content-Type"] = "application/json"
+        ngx.say('{"accessDecision": "ACCESS_DECISION_ALLOW"}')
+      }
+    }
+  }
+]]
+
 -- Run the tests for each strategy. Strategies include "postgres" and "off"
 --   which represent the deployment topologies for Kong Gateway
 for _, strategy in helpers.all_strategies() do
@@ -863,6 +965,24 @@ for _, strategy in helpers.all_strategies() do
         },
       }
 
+      -- Route for the demo curl exact-output validation (workspace=2, evaluate_policy, database_name=local)
+      local route_demo_exact = blue_print.routes:insert({
+        paths = { "/query" },
+        service = { id = service.id },
+      })
+      blue_print.plugins:insert {
+        name = PLUGIN_NAME,
+        route = { id = route_demo_exact.id },
+        config = {
+          bigeye_url = "http://localhost:16570",
+          api_key = "test-api-key-12345",
+          workspace_id = 2,
+          timeout = 5000,
+          evaluate_policy = true,
+          database_name = "local",
+        },
+      }
+
       -- start kong with fixtures
       assert(helpers.start_kong({
         -- use the custom test template to create a local mock server
@@ -1097,6 +1217,27 @@ for _, strategy in helpers.all_strategies() do
         local r = client:get("/test-agent/anything", {
           headers = {
             ["x-agent-id"] = "test-agent-abc",
+          },
+        })
+
+        assert.response(r).has.status(200)
+      end)
+
+      it("falls back to x-ai-agent-id as agent_external_id when x-agent-id is absent", function()
+        local r = client:get("/test-agent/anything", {
+          headers = {
+            ["x-ai-agent-id"] = "test-agent-abc",
+          },
+        })
+
+        assert.response(r).has.status(200)
+      end)
+
+      it("prefers x-agent-id over x-ai-agent-id for agent_external_id", function()
+        local r = client:get("/test-agent/anything", {
+          headers = {
+            ["x-agent-id"] = "test-agent-abc",
+            ["x-ai-agent-id"] = "different-ai-agent",
           },
         })
 
@@ -1425,6 +1566,42 @@ for _, strategy in helpers.all_strategies() do
         })
 
         -- Mock validates aiAgent.description matches the header value
+        assert.response(r).has.status(200)
+      end)
+
+    end)
+
+    describe("Demo: exact Bigeye request shape", function()
+
+      -- Mirrors the demo curl from the Kong plugin README / ENG-18982:
+      --   POST /query?sql=SELECT+*+FROM+kong_test
+      --   x-ai-agent-id: kong-test-agent-001
+      --   x-ai-agent-description: Test agent for Kong plugin
+      --   x-conversation-id: kong-test-conversation-001
+      --   x-username: alice@example.com
+      --   x-initial-prompt: This is a test of the Kong plugin
+      --
+      -- Plugin config: workspace_id=2, evaluate_policy=true, database_name=local
+      --
+      -- Expected Bigeye request:
+      --   operation="POST", path="/query", workspace=2, evaluatePolicy=true
+      --   accessObjects=[{type=3, sourceType=0, sourceName="local", externalId="SELECT * FROM kong_test"}]
+      --   agentExternalId="kong-test-agent-001", conversationExternalId="kong-test-conversation-001"
+      --   initialPrompt="This is a test of the Kong plugin", username="alice@example.com"
+      --   aiAgent={externalId="kong-test-agent-001", description="Test agent for Kong plugin"}
+      it("sends all expected fields to Bigeye matching the demo curl example", function()
+        local r = client:post("/query?sql=SELECT+*+FROM+kong_test", {
+          headers = {
+            ["Content-Type"] = "application/json",
+            ["x-ai-agent-id"] = "kong-test-agent-001",
+            ["x-ai-agent-description"] = "Test agent for Kong plugin",
+            ["x-conversation-id"] = "kong-test-conversation-001",
+            ["x-username"] = "alice@example.com",
+            ["x-initial-prompt"] = "This is a test of the Kong plugin",
+          },
+        })
+
+        -- Mock at port 16570 validates every field; returns DENY with a descriptive reason if any field is wrong
         assert.response(r).has.status(200)
       end)
 

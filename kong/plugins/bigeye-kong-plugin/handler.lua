@@ -228,8 +228,8 @@ function BigeyeKongPluginHandler:access(conf)
     workspace = conf.workspace_id,
     aiAgent = ai_agent,
     accessObjects = #access_objects > 0 and access_objects or nil,
-    -- get_header() guarantees a single string even if the header is repeated
-    agentExternalId = kong.request.get_header("x-agent-id"),
+    -- x-agent-id takes priority; fall back to x-ai-agent-id when only the AI agent header is present
+    agentExternalId = kong.request.get_header("x-agent-id") or kong.request.get_header("x-ai-agent-id"),
     -- x-conversation-id takes precedence over x-session-id
     conversationExternalId = kong.request.get_header("x-conversation-id") or kong.request.get_header("x-session-id"),
     -- only include evaluatePolicy when explicitly enabled to avoid sending proto3 default
