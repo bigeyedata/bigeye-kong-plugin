@@ -661,6 +661,9 @@ fixtures.http_mock.bigeye_validate_demo = [[
           if obj.externalId ~= "SELECT * FROM kong_test" then
             table.insert(errors, "expected accessObjects[0].externalId='SELECT * FROM kong_test', got: " .. tostring(obj.externalId))
           end
+          if obj.workspaceId ~= 2 then
+            table.insert(errors, "expected accessObjects[0].workspaceId=2, got: " .. tostring(obj.workspaceId))
+          end
         end
 
         -- Validate aiAgent nested object (populated from x-ai-agent-id / x-ai-agent-description)

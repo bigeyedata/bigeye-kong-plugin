@@ -160,6 +160,7 @@ function BigeyeKongPluginHandler:access(conf)
       sourceType = conf.warehouse_type,
       sourceName = database,
       externalId = sql,
+      workspaceId = conf.workspace_id,
     })
   end
   if tables then
@@ -168,6 +169,7 @@ function BigeyeKongPluginHandler:access(conf)
         type = 2,
         sourceType = conf.warehouse_type,
         sourceName = table_name,
+        workspaceId = conf.workspace_id,
       })
     end
   end
@@ -177,6 +179,7 @@ function BigeyeKongPluginHandler:access(conf)
         type = 1,
         sourceType = conf.warehouse_type,
         sourceName = column_name,
+        workspaceId = conf.workspace_id,
       })
     end
   end
