@@ -160,6 +160,7 @@ function BigeyeKongPluginHandler:access(conf)
       sourceType = conf.warehouse_type,
       sourceName = database,
       externalId = sql,
+      workspaceId = conf.workspace_id,
     })
   end
   if tables then
@@ -168,6 +169,7 @@ function BigeyeKongPluginHandler:access(conf)
         type = 2,
         sourceType = conf.warehouse_type,
         sourceName = table_name,
+        workspaceId = conf.workspace_id,
       })
     end
   end
@@ -177,6 +179,7 @@ function BigeyeKongPluginHandler:access(conf)
         type = 1,
         sourceType = conf.warehouse_type,
         sourceName = column_name,
+        workspaceId = conf.workspace_id,
       })
     end
   end
@@ -228,8 +231,8 @@ function BigeyeKongPluginHandler:access(conf)
     workspace = conf.workspace_id,
     aiAgent = ai_agent,
     accessObjects = #access_objects > 0 and access_objects or nil,
-    -- get_header() guarantees a single string even if the header is repeated
-    agentExternalId = kong.request.get_header("x-agent-id"),
+    -- x-agent-id takes priority; fall back to x-ai-agent-id when only the AI agent header is present
+    agentExternalId = kong.request.get_header("x-agent-id") or kong.request.get_header("x-ai-agent-id"),
     -- x-conversation-id takes precedence over x-session-id
     conversationExternalId = kong.request.get_header("x-conversation-id") or kong.request.get_header("x-session-id"),
     -- only include evaluatePolicy when explicitly enabled to avoid sending proto3 default
@@ -324,12 +327,15 @@ function BigeyeKongPluginHandler:access(conf)
 
   -- Check if access is denied
   kong.log.debug("Response from Bigeye - response_data: ", cjson.encode(response_data))
-  if response_data.policyDecisions then
-    kong.log.debug("Bigeye policy decisions: ", cjson.encode(response_data.policyDecisions))
+  local policy_decisions = response_data.policyDecisions or response_data.policy_decisions
+  if policy_decisions then
+    kong.log.debug("Bigeye policy decisions: ", cjson.encode(policy_decisions))
   end
+  -- Accept both camelCase (proto3 JSON) and snake_case field names.
   -- overall_decision is the authoritative field when policy evaluation is enabled;
-  -- fall back to accessDecision for responses that predate policy evaluation
-  local decision = response_data.overallDecision or response_data.accessDecision
+  -- fall back to accessDecision for responses that predate policy evaluation.
+  local decision = response_data.overallDecision or response_data.overall_decision
+                   or response_data.accessDecision or response_data.access_decision
   if decision == "ACCESS_DECISION_DENY" then
     local reason = response_data.reason or "Access denied by Bigeye"
     kong.log.warn("Blocking request - Bigeye decision: DENY - Reason: ", reason)

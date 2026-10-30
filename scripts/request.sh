@@ -52,3 +52,15 @@ curl -i -X POST "http://localhost:8000/query" \
 # Classic: SQL query via query parameter
 curl -i "http://localhost:8000/query?sql=SELECT+*+FROM+users&database=production" \
   -H "apikey: my-secret-api-key"
+
+# Demo: policy engine end-to-end (ENG-18982)
+# Shows all fields surfaced in the Bigeye access-decision request.
+# x-ai-agent-id is used for both agentExternalId (top-level) and aiAgent.externalId.
+curl -i -X POST "http://localhost:8000/query?sql=SELECT+*+FROM+kong_test" \
+  -H "apikey: my-secret-api-key" \
+  -H "Content-Type: application/json" \
+  -H "x-ai-agent-id: kong-test-agent-001" \
+  -H "x-ai-agent-description: Test agent for Kong plugin" \
+  -H "x-conversation-id: kong-test-conversation-001" \
+  -H "x-username: alice@example.com" \
+  -H "x-initial-prompt: This is a test of the Kong plugin"
